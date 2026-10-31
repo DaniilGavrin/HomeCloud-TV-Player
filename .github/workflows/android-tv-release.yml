@@ -1,4 +1,11 @@
+
 name: HomeCloud TV Player — Android TV APK Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,6 +19,7 @@ jobs:
     name: Build, sign and release Universal APK
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+
     env:
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
       NDK_VERSION: '30.0.14904198'
@@ -40,7 +48,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --install 'platforms;android-37' 'build-tools;37.0.0' "ndk;${NDK_VERSION}"
+          sdkmanager --install \
+            'platforms;android-37' \
+            'build-tools;37.0.0' \
+            "ndk;${NDK_VERSION}"
+
           echo "NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
@@ -57,8 +69,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # The Android project is normally generated from Tauri; this also supports
-      # a repository that intentionally commits its customized gen/android files.
       - name: Initialize Android project if absent
         shell: bash
         run: |
@@ -85,13 +95,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*universal*release*.apk' ! -name '*unsigned*' | head -n1)"
+
+          apk="$(find src-tauri/gen/android/app/build/outputs/apk \
+            -type f \
+            -name '*universal*release*.apk' \
+            ! -name '*unsigned*' | head -n1)"
+
           if [ -z "$apk" ] || [ ! -f "$apk" ]; then
             echo 'Signed universal APK not found.' >&2
-            find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' || true
+            find src-tauri/gen/android/app/build/outputs/apk \
+              -type f -name '*.apk' || true
             exit 1
           fi
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
+
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" \
+            verify --verbose --print-certs "$apk"
+
           sha256sum "$apk"
           echo "APK_PATH=$apk" >> "$GITHUB_ENV"
 
@@ -101,13 +120,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+
+          short_sha="${GITHUB_SHA:0:12}"
+          tag="tv-${short_sha}"
           asset="${APK_PATH}#HomeCloud-TV-Player-${tag}-universal.apk"
+
+          echo "Commit: ${GITHUB_SHA}"
+          echo "Release tag: ${tag}"
+
           if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release exists. Updating APK..."
             gh release upload "$tag" "$asset" --clobber
           else
+            echo "Creating new release..."
             gh release create "$tag" "$asset" \
+              --target "$GITHUB_SHA" \
               --title "HomeCloud TV Player ${tag}" \
               --generate-notes \
-              --verify-tag
+              --latest
           fi
+
+          echo "Release published successfully."
