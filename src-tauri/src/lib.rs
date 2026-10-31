@@ -1,3 +1,4 @@
+mod discovery;
 use std::{
     sync::{atomic::{AtomicU64, Ordering}, Arc},
     time::Duration,
@@ -145,7 +146,8 @@ async fn ws_disconnect(app: AppHandle, runtime: State<'_, WsRuntime>) -> Result<
 pub fn run() {
     tauri::Builder::default()
         .manage(WsRuntime::default())
-        .invoke_handler(tauri::generate_handler![ws_connect, ws_disconnect])
+        .manage(discovery::DiscoveryRuntime::default())
+        .invoke_handler(tauri::generate_handler![ws_connect, ws_disconnect, discovery::discover_lan_servers, discovery::cancel_lan_discovery])
         .run(tauri::generate_context!())
         .expect("error while running TV Player");
 }

@@ -1,0 +1,81 @@
+/* Extends the existing HomeCloud Liquid Glass stage without changing Glass v2. */
+.tv-discovery-screen { justify-content: center; }
+.tv-discovery-body {
+  width: min(640px, 100%);
+  margin-top: clamp(16px, 2.4vh, 28px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  min-height: 118px;
+}
+.tv-discovery-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: rgba(230, 237, 247, .78);
+  font-size: 15px;
+}
+.tv-discovery-loading p { margin: 0; }
+.tv-discovery-spinner { margin: 0; width: 44px; height: 44px; }
+.tv-discovery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-height: min(36vh, 320px);
+  overflow: auto;
+  padding: 4px 6px;
+}
+.tv-discovery-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 78px;
+  gap: 16px;
+  padding: 13px 18px;
+  text-align: left;
+  color: white;
+  cursor: pointer;
+  border-radius: 18px;
+  background: rgba(255,255,255,.065);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 1px rgba(255,255,255,.055);
+  transition: background .2s, border-color .2s;
+}
+.tv-discovery-item:hover, .tv-discovery-item:focus-visible {
+  background: rgba(180,221,255,.12);
+  border-color: rgba(185,224,255,.5);
+}
+.tv-discovery-item:focus-visible { outline: 3px solid rgba(170,224,255,.95); outline-offset: 2px; }
+.tv-discovery-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
+  background: #92e6ba;
+  box-shadow: 0 0 12px rgba(146,230,186,.6);
+}
+.tv-discovery-details { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.tv-discovery-details strong { font-size: clamp(18px, 1.7vw, 23px); font-weight: 570; }
+.tv-discovery-details small { color: rgba(219,237,253,.71); font-size: 13px; overflow-wrap: anywhere; }
+.tv-discovery-arrow { font-size: 36px; line-height: 1; opacity: .7; }
+.tv-discovery-empty { color: rgba(231, 236, 247, .84); text-align: center; }
+.tv-discovery-empty strong { font-size: 20px; }
+.tv-discovery-empty p { max-width: 450px; margin: 10px auto 0; line-height: 1.5; font-size: 14px; }
+.tv-discovery-summary {
+  font-size: 12px;
+  color: rgba(225,236,248,.57);
+  margin: 12px 0 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.tv-discovery-error { text-align: center; }
+.tv-discovery-buttons { margin-top: clamp(14px, 3vh, 26px); }
+@media (max-height: 660px) {
+  .tv-discovery-body { margin-top: 8px; min-height: 76px; }
+  .tv-discovery-list { max-height: 28vh; }
+  .tv-discovery-item { min-height: 58px; padding: 9px 12px; }
+  .tv-discovery-buttons { margin-top: 10px; gap: 8px; }
+}

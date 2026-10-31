@@ -114,7 +114,7 @@ export default function App() {
                 onBack={() => { setError(null); setScreen('choose'); }}
               />
             )}
-            {screen === 'discovery' && <DiscoveryScreen onBack={() => setScreen('choose')} />}
+            {screen === 'discovery' && <DiscoveryScreen onBack={() => setScreen('choose')} onSelect={(url) => { setAddress(url); void connect(url); }} />}
             {screen === 'connecting' && <ConnectingScreen onBack={cancelConnection} />}
             {screen === 'connected' && <ConnectedScreen />}
           </GlassStage>
