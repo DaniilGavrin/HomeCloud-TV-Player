@@ -1,0 +1,218 @@
+/* TV Player onboarding. Visual tokens follow the existing HomeCloud glass style. */
+.tv-app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.97);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.tv-background {
+  position: absolute;
+  inset: 0;
+  background-color: #090f21;
+  /* Copy the same back1.png used by HomeCloud UI into this project's public/. */
+  background-image:
+    radial-gradient(ellipse 65% 85% at 20% 16%, rgba(16, 102, 150, 0.28), transparent 78%),
+    radial-gradient(ellipse 60% 80% at 88% 88%, rgba(71, 42, 150, 0.24), transparent 70%),
+    url('/back1.png');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.02);
+}
+
+.tv-backdrop-dim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(2, 9, 21, .28), rgba(3, 8, 19, .49));
+}
+
+.tv-stage-wrapper {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: clamp(18px, 3.4vw, 56px);
+}
+
+.tv-glass-stage {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  width: min(1130px, calc(100vw - 44px));
+  height: min(730px, calc(100vh - 58px));
+  border-radius: clamp(28px, 3vw, 42px);
+  overflow: hidden;
+  /* Same foundations as HomeCloud's .homecloud-glass. */
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(26px) saturate(160%);
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  will-change: transform, opacity;
+}
+
+.tv-glass-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0) 36%, rgba(255, 255, 255, 0.018) 78%);
+}
+
+.tv-glass-content {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(30px, 5vw, 64px);
+}
+
+.tv-screen {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  min-height: 0;
+  text-align: center;
+}
+
+.tv-eyebrow {
+  margin: 0 0 17px;
+  color: rgba(201, 235, 249, 0.88);
+  font-size: clamp(12px, 1.05vw, 15px);
+  font-weight: 650;
+  letter-spacing: .20em;
+  text-transform: uppercase;
+}
+
+.tv-title {
+  font-size: clamp(39px, 5vw, 69px);
+  font-weight: 570;
+  letter-spacing: -.045em;
+  line-height: 1.1;
+  margin: 0;
+  text-wrap: balance;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, .15);
+}
+.tv-title--medium { font-size: clamp(33px, 4vw, 52px); }
+
+.tv-subtitle {
+  margin: 18px auto 0;
+  color: rgba(231, 237, 247, 0.69);
+  font-size: clamp(15px, 1.36vw, 18px);
+  line-height: 1.45;
+  max-width: 550px;
+}
+
+.tv-controls {
+  display: flex;
+  flex-direction: column;
+  width: min(510px, 100%);
+  margin-top: clamp(26px, 4.8vh, 46px);
+  gap: 13px;
+}
+.tv-controls--choice { gap: 16px; margin-top: 42px; }
+.tv-controls--bottom { margin-top: 40px; }
+
+.tv-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: clamp(52px, 5.4vh, 64px);
+  border: 1px solid rgba(255, 255, 255, .19);
+  border-radius: 17px;
+  padding: 13px 21px;
+  font-size: clamp(16px, 1.27vw, 19px);
+  line-height: 1.2;
+  font-weight: 560;
+  color: white;
+  background: rgba(255, 255, 255, 0.095);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.10);
+  transition: background 170ms ease, border-color 170ms ease, box-shadow 170ms ease;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tv-button:hover { background: rgba(255, 255, 255, .17); }
+.tv-button--primary {
+  background: rgba(122, 188, 236, .22);
+  border-color: rgba(166, 216, 255, .37);
+}
+.tv-button--primary:hover { background: rgba(122, 188, 236, .34); }
+.tv-button:focus-visible, .tv-input:focus-visible {
+  outline: 3px solid rgba(162, 220, 255, .95);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 7px rgba(81, 171, 244, .16);
+}
+.tv-button:disabled { opacity: .48; cursor: not-allowed; }
+
+.tv-field-label {
+  align-self: flex-start;
+  color: rgba(233, 239, 249, .85);
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0 0 1px;
+}
+.tv-input {
+  width: 100%;
+  height: clamp(52px, 5.6vh, 64px);
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 17px;
+  padding: 0 20px;
+  color: #fff;
+  background: rgba(10, 19, 37, .35);
+  font-size: clamp(16px, 1.28vw, 19px);
+  letter-spacing: .01em;
+  outline: none;
+  text-align: left;
+  transition: border-color 170ms ease;
+}
+.tv-input::placeholder { color: rgba(219, 233, 249, .43); }
+.tv-input:hover { border-color: rgba(255, 255, 255, .30); }
+.tv-input[aria-invalid="true"] { border-color: rgba(255, 120, 137, .7); }
+
+.tv-form-buttons { display: flex; flex-direction: column; gap: 13px; margin-top: 13px; }
+.tv-error { color: #ffd4db; font-size: 14px; text-align: left; margin: 2px 0; word-break: break-word; }
+
+.tv-brand-orb {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  margin-bottom: 34px;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255,255,255,.92), rgba(255,255,255,.15) 23%, rgba(0,238,255,.32) 53%, transparent 74%),
+    linear-gradient(145deg, rgba(120, 255, 255, .55), rgba(128, 70, 255, .5));
+  box-shadow: 0 0 46px rgba(0, 240, 255, .26), inset 0 1px 10px rgba(255,255,255,.24);
+}
+.tv-loading-bar { overflow: hidden; width: 128px; height: 3px; margin-top: 44px; border-radius: 8px; background: rgba(255,255,255,.15); }
+.tv-loading-bar > span { display: block; transform-origin: left center; width: 100%; height: 100%; border-radius: inherit; background: rgba(177, 225, 255, .84); }
+.tv-spinner { width: 56px; height: 56px; border: 3px solid rgba(255,255,255,.16); border-top-color: rgba(190,231,255,.95); border-radius: 50%; margin-bottom: 35px; }
+.tv-screen--empty { min-height: 100%; }
+
+@media (max-height: 550px) {
+  .tv-glass-stage { height: calc(100vh - 28px); }
+  .tv-glass-content { padding: 18px; }
+  .tv-eyebrow { margin-bottom: 8px; }
+  .tv-subtitle { margin-top: 8px; }
+  .tv-controls { margin-top: 15px; gap: 8px; }
+  .tv-form-buttons { margin-top: 8px; gap: 8px; }
+  .tv-brand-orb { width: 48px; height: 48px; margin-bottom: 15px; }
+  .tv-loading-bar { margin-top: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-button, .tv-input { transition: none; }
+}

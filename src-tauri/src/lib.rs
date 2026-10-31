@@ -1,34 +1,41 @@
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
-use std::time::Duration;
+use std::{
+    sync::{atomic::{AtomicU64, Ordering}, Arc},
+    time::Duration,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-
-struct ActiveConnection {
-    sender: mpsc::Sender<String>,
-    stop: oneshot::Sender<()>,
-}
 
 #[derive(Default)]
 struct WsRuntime {
-    active: Mutex<Option<ActiveConnection>>,
+    // A new connection or explicit disconnect invalidates all earlier attempts.
     generation: Arc<AtomicU64>,
+    stop: Mutex<Option<oneshot::Sender<()>>>,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(Clone, Serialize)]
 struct WsStatus<'a> {
     status: &'a str,
     detail: &'a str,
 }
 
-fn publish_status(app: &AppHandle, status: &str, detail: &str) {
+fn emit_status(app: &AppHandle, status: &str, detail: &str) {
     let _ = app.emit("tv-player-ws-status", WsStatus { status, detail });
 }
 
+fn validate_device_id(device_id: &str) -> bool {
+    !device_id.is_empty()
+        && device_id.len() <= 128
+        && device_id.bytes().next().is_some_and(|first| first.is_ascii_alphanumeric())
+        && device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+}
+
+/// Establishes a *real* Go WebSocket connection and waits for HomeCloud's
+/// `identified` response before reporting success to React.
 #[tauri::command]
 async fn ws_connect(
     app: AppHandle,
@@ -36,114 +43,101 @@ async fn ws_connect(
     url: String,
     device_id: String,
 ) -> Result<(), String> {
-    let url = url.trim().to_string();
-    if !url.starts_with("ws://") && !url.starts_with("wss://") {
-        return Err("Expected ws:// or wss:// URL".to_string());
+    let url = url.trim().to_owned();
+    if !(url.starts_with("ws://") || url.starts_with("wss://")) {
+        return Err("Ожидается адрес ws:// или wss://".into());
     }
-    if device_id.is_empty() || device_id.len() > 128 ||
-        !device_id.chars().all(|c| c.is_ascii_alphanumeric() || "_.:-".contains(c)) {
-        return Err("Invalid device_id".to_string());
+    if !validate_device_id(&device_id) {
+        return Err("Некорректный идентификатор TV Player".into());
     }
 
-    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(8), connect_async(url.as_str()))
-        .await
-        .map_err(|_| "Connection timed out".to_string())?
-        .map_err(|e| format!("WebSocket connect failed: {e}"))?;
+    // Invalidate and stop the previous connection, if any.
+    let attempt = runtime.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(stop) = runtime.stop.lock().await.take() {
+        let _ = stop.send(());
+    }
+
+    let (mut socket, _) = tokio::time::timeout(
+        Duration::from_secs(9), connect_async(url.as_str()),
+    ).await
+        .map_err(|_| "Время подключения к серверу истекло".to_string())?
+        .map_err(|e| format!("Ошибка подключения WebSocket: {e}"))?;
+
+    if runtime.generation.load(Ordering::SeqCst) != attempt {
+        return Err("Подключение отменено".into());
+    }
 
     let hello = json!({
-        "v": 1, "id": "tv-player-hello", "type": "hello",
-        "device_id": device_id, "client_type": "tv"
+        "v": 1,
+        "id": "tv-player-hello",
+        "type": "hello",
+        "device_id": device_id,
+        "client_type": "tv"
     });
+
     tokio::time::timeout(
         Duration::from_secs(5),
         socket.send(Message::Text(hello.to_string().into())),
-    )
-    .await
-    .map_err(|_| "hello write timed out".to_string())?
-    .map_err(|e| format!("hello write failed: {e}"))?;
+    ).await
+        .map_err(|_| "Время отправки hello истекло".to_string())?
+        .map_err(|e| format!("Ошибка отправки hello: {e}"))?;
 
     let first = tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
-        .map_err(|_| "hello response timed out".to_string())?
-        .ok_or_else(|| "Server closed before identification".to_string())?
-        .map_err(|e| format!("hello response failed: {e}"))?;
-    let Message::Text(reply) = first else {
-        return Err("Expected JSON 'identified' message from HomeCloud".into());
+        .map_err(|_| "Сервер не ответил на hello вовремя".to_string())?
+        .ok_or_else(|| "Сервер закрыл соединение до идентификации".to_string())?
+        .map_err(|e| format!("Ошибка ответа сервера: {e}"))?;
+
+    let Message::Text(response) = first else {
+        return Err("Сервер не ответил JSON-сообщением identified".into());
     };
-    let response: Value = serde_json::from_str(reply.as_str())
-        .map_err(|e| format!("Invalid server hello response: {e}"))?;
-    if response.get("type").and_then(Value::as_str) != Some("identified") {
-        return Err(format!("HomeCloud rejected identification: {reply}"));
+    let parsed: Value = serde_json::from_str(response.as_str())
+        .map_err(|e| format!("Некорректный JSON от сервера: {e}"))?;
+    if parsed.get("type").and_then(Value::as_str) != Some("identified") {
+        return Err(format!("Сервер не подтвердил подключение: {response}"));
     }
 
-    let (sender, mut receiver) = mpsc::channel::<String>(64);
-    let (stop, mut stop_receiver) = oneshot::channel::<()>();
-    let generation = runtime.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let (tx, mut rx) = oneshot::channel::<()>();
     {
-        let mut active = runtime.active.lock().await;
-        if let Some(previous) = active.take() {
-            let _ = previous.stop.send(());
+        let mut active = runtime.stop.lock().await;
+        if runtime.generation.load(Ordering::SeqCst) != attempt {
+            return Err("Подключение отменено".into());
         }
-        *active = Some(ActiveConnection { sender, stop });
+        *active = Some(tx);
     }
-    publish_status(&app, "connected", "HomeCloud hello identified");
 
-    let current_generation = runtime.generation.clone();
+    emit_status(&app, "connected", "Сервер подтвердил подключение");
+    let generation = runtime.generation.clone();
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::select! {
-                _ = &mut stop_receiver => { break; }
-                outgoing = receiver.recv() => {
-                    let Some(payload) = outgoing else { break; };
-                    if let Err(err) = socket.send(Message::Text(payload.into())).await {
-                        publish_status(&app, "error", &format!("WS send: {err}"));
-                        break;
+                _ = &mut rx => break,
+                next = socket.next() => match next {
+                    Some(Ok(Message::Ping(_))) => {
+                        // tungstenite queues automatic PONG; flush its queued reply.
+                        if socket.flush().await.is_err() { break; }
                     }
-                }
-                incoming = socket.next() => {
-                    match incoming {
-                        Some(Ok(Message::Text(data))) => {
-                            let _ = app.emit("tv-player-ws-message", data.to_string());
-                        }
-                        Some(Ok(Message::Close(_))) | None => break,
-                        Some(Err(err)) => {
-                            publish_status(&app, "error", &format!("WS receive: {err}"));
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(_)) => break,
+                    Some(Ok(_)) => { /* Media/commands belong to later TV Player tasks. */ }
+                },
             }
         }
-        let _ = socket.send(Message::Close(None)).await;
-        if current_generation.load(Ordering::SeqCst) == generation {
-            publish_status(&app, "disconnected", "WebSocket closed");
+        let _ = socket.close(None).await;
+        if generation.load(Ordering::SeqCst) == attempt {
+            emit_status(&app, "disconnected", "Соединение с сервером прервано");
         }
     });
     Ok(())
 }
 
 #[tauri::command]
-async fn ws_send(runtime: State<'_, WsRuntime>, payload: String) -> Result<(), String> {
-    if payload.len() > 65_536 {
-        return Err("Message exceeds HomeCloud WS payload limit".into());
-    }
-    serde_json::from_str::<Value>(&payload)
-        .map_err(|e| format!("Invalid JSON payload: {e}"))?;
-    let sender = {
-        let active = runtime.active.lock().await;
-        active.as_ref().ok_or("Not connected")?.sender.clone()
-    };
-    sender.send(payload).await.map_err(|_| "Connection no longer active".to_string())
-}
-
-#[tauri::command]
 async fn ws_disconnect(app: AppHandle, runtime: State<'_, WsRuntime>) -> Result<(), String> {
     runtime.generation.fetch_add(1, Ordering::SeqCst);
-    if let Some(active) = runtime.active.lock().await.take() {
-        let _ = active.stop.send(());
+    if let Some(stop) = runtime.stop.lock().await.take() {
+        let _ = stop.send(());
     }
-    publish_status(&app, "disconnected", "Disconnected by user");
+    emit_status(&app, "disconnected", "Подключение отменено");
     Ok(())
 }
 
@@ -151,7 +145,7 @@ async fn ws_disconnect(app: AppHandle, runtime: State<'_, WsRuntime>) -> Result<
 pub fn run() {
     tauri::Builder::default()
         .manage(WsRuntime::default())
-        .invoke_handler(tauri::generate_handler![ws_connect, ws_send, ws_disconnect])
+        .invoke_handler(tauri::generate_handler![ws_connect, ws_disconnect])
         .run(tauri::generate_context!())
         .expect("error while running TV Player");
 }
