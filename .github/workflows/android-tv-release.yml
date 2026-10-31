@@ -1,0 +1,118 @@
+name: HomeCloud TV Player — Android TV APK Release
+
+on:
+  push:
+    tags:
+      - 'tv-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: homecloud-tv-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-apk:
+    name: Build, sign and release Universal APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      NDK_VERSION: '30.0.14904198'
+      CI: 'true'
+
+    steps:
+      - name: Checkout TV Player
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 37 and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-37' 'build-tools;37.0.0' "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Install Rust Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # The Android project is normally generated from Tauri; this also supports
+      # a repository that intentionally commits its customized gen/android files.
+      - name: Initialize Android project if absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f src-tauri/gen/android/app/build.gradle.kts ]; then
+            npm run tauri android init -- --ci
+          fi
+
+      - name: Configure Android TV launcher and signing
+        env:
+          HC_TV_JKS_BASE64: ${{ secrets.HC_TV_JKS_BASE64 }}
+          HC_TV_STORE_PASSWORD: ${{ secrets.HC_TV_STORE_PASSWORD }}
+          HC_TV_KEY_PASSWORD: ${{ secrets.HC_TV_KEY_PASSWORD }}
+          HC_TV_KEY_ALIAS: ${{ secrets.HC_TV_KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/prepare_android.py --ci
+
+      - name: Build release Universal APK (all ABIs)
+        run: npm run tauri android build -- --apk --ci
+
+      - name: Locate and verify signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*universal*release*.apk' ! -name '*unsigned*' | head -n1)"
+          if [ -z "$apk" ] || [ ! -f "$apk" ]; then
+            echo 'Signed universal APK not found.' >&2
+            find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' || true
+            exit 1
+          fi
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
+          sha256sum "$apk"
+          echo "APK_PATH=$apk" >> "$GITHUB_ENV"
+
+      - name: Publish APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          asset="${APK_PATH}#HomeCloud-TV-Player-${tag}-universal.apk"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$asset" --clobber
+          else
+            gh release create "$tag" "$asset" \
+              --title "HomeCloud TV Player ${tag}" \
+              --generate-notes \
+              --verify-tag
+          fi
