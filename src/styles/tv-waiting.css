@@ -1,0 +1,58 @@
+/* KAN-34 main screen. Uses the existing Glass v2 panel without changing it. */
+.tv-waiting-screen {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  justify-content: center;
+  align-items: center;
+}
+
+.tv-waiting-content {
+  width: min(850px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(26px, 4vh, 44px);
+  padding: 18px;
+  text-align: center;
+}
+
+.tv-waiting-spinner {
+  width: clamp(52px, 5vw, 74px);
+  height: clamp(52px, 5vw, 74px);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transform-origin: center;
+  animation: hc-tv-waiting-spin 1.5s linear infinite;
+  will-change: transform;
+}
+
+@keyframes hc-tv-waiting-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.tv-waiting-spinner-ring {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 50%;
+  border: 3px solid rgba(210, 236, 255, 0.13);
+  border-top-color: rgba(205, 235, 255, 0.95);
+  border-right-color: rgba(172, 216, 248, 0.42);
+  box-shadow: 0 0 18px rgba(120, 190, 250, 0.08);
+}
+
+.tv-waiting-title {
+  color: rgba(248, 251, 255, 0.96);
+  font-size: clamp(25px, 3vw, 43px);
+  font-weight: 560;
+  line-height: 1.18;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+  margin: 0;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.2);
+}
