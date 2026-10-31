@@ -1,10 +1,5 @@
 name: HomeCloud TV Player — Android TV APK Release
 
-on:
-  push:
-    tags:
-      - 'tv-v*'
-
 permissions:
   contents: write
 
