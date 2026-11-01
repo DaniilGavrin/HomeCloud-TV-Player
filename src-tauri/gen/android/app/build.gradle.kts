@@ -90,7 +90,11 @@ println("")
 // Android / Tauri 2
 // -----------------------------------------------------------------------------
 android {
-  compileSdk = 37
+  compileSdk {
+    version = release(37) {
+      minorApiLevel = 0
+    }
+  }
   namespace = "rs.bytewizard.hctvplayer"
 
   defaultConfig {
