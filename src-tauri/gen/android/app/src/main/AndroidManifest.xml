@@ -22,6 +22,16 @@
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
             android:exported="true">
+            <!-- Keep the standard launcher intent for launchers and app managers. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Required for visibility and launching from the Android TV home screen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
         </activity>
 
         <provider
