@@ -1,14 +1,17 @@
-
 name: HomeCloud TV Player — Android TV APK Release
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
+# PR build code cannot publish releases or write repository contents.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: homecloud-tv-android-${{ github.ref }}
@@ -16,13 +19,13 @@ concurrency:
 
 jobs:
   android-apk:
-    name: Build, sign and release Universal APK
+    name: Build and verify universal Android APK
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     env:
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-      NDK_VERSION: '30.0.14904198'
+      NDK_VERSION: '30.0.16248370'
       CI: 'true'
 
     steps:
@@ -42,16 +45,20 @@ jobs:
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
-      - name: Install Android 37 and NDK
+      - name: Install Android 37.0 and NDK r30
         shell: bash
         run: |
           set -euo pipefail
           sdkmanager --install \
-            'platforms;android-37' \
-            'build-tools;37.0.0' \
+            'platforms;android-37.0' \
+            'build-tools;36.0.0' \
             "ndk;${NDK_VERSION}"
+
+          test -f "${ANDROID_HOME}/platforms/android-37.0/android.jar"
+          test -x "${ANDROID_HOME}/build-tools/36.0.0/apksigner"
+          test -d "${ANDROID_HOME}/ndk/${NDK_VERSION}"
 
           echo "NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
@@ -77,7 +84,37 @@ jobs:
             npm run tauri android init -- --ci
           fi
 
-      - name: Configure Android TV launcher and signing
+      # A pull request is never given the real release signing credentials.
+      - name: Prepare disposable signing key for PR
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          key_dir="$(mktemp -d "${RUNNER_TEMP}/hc-tv-ci-key-XXXXXX")"
+          store="${key_dir}/ci-test.jks"
+          pass="$(openssl rand -hex 24)"
+          echo "::add-mask::${pass}"
+          keytool -genkeypair \
+            -keystore "$store" \
+            -storetype JKS \
+            -storepass "$pass" \
+            -keypass "$pass" \
+            -alias ci-validation-only \
+            -keyalg RSA -keysize 3072 \
+            -validity 2 \
+            -dname 'CN=CI Validation Only,O=HomeCloud' \
+            -noprompt >/dev/null 2>&1
+          {
+            printf 'HC_TV_KEYSTORE_FILE=%s\n' "$store"
+            printf 'HC_TV_STORE_PASSWORD=%s\n' "$pass"
+            printf 'HC_TV_KEY_PASSWORD=%s\n' "$pass"
+            printf 'HC_TV_KEY_ALIAS=%s\n' 'ci-validation-only'
+          } >> "$GITHUB_ENV"
+          echo 'Disposable test signing key prepared.'
+
+      - name: Configure real release signing (main only)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           HC_TV_JKS_BASE64: ${{ secrets.HC_TV_JKS_BASE64 }}
           HC_TV_STORE_PASSWORD: ${{ secrets.HC_TV_STORE_PASSWORD }}
@@ -86,58 +123,103 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          umask 077
+          test -n "$HC_TV_STORE_PASSWORD"
+          test -n "$HC_TV_KEY_PASSWORD"
+          test -n "$HC_TV_KEY_ALIAS"
           python3 .github/scripts/prepare_android.py --ci
+          {
+            printf 'HC_TV_STORE_PASSWORD=%s\n' "$HC_TV_STORE_PASSWORD"
+            printf 'HC_TV_KEY_PASSWORD=%s\n' "$HC_TV_KEY_PASSWORD"
+            printf 'HC_TV_KEY_ALIAS=%s\n' "$HC_TV_KEY_ALIAS"
+          } >> "$GITHUB_ENV"
+          echo 'Release signing credentials prepared securely.'
 
-      - name: Build release Universal APK (all ABIs)
-        run: npm run tauri android build -- --apk --ci
+      - name: Build universal release APK (all ABIs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${HC_TV_KEYSTORE_FILE:-}"
+          test -f "$HC_TV_KEYSTORE_FILE"
+          npm run tauri android build -- --apk --ci
 
       - name: Locate and verify signed APK
         shell: bash
         run: |
           set -euo pipefail
-
           apk="$(find src-tauri/gen/android/app/build/outputs/apk \
             -type f \
             -name '*universal*release*.apk' \
             ! -name '*unsigned*' | head -n1)"
 
           if [ -z "$apk" ] || [ ! -f "$apk" ]; then
-            echo 'Signed universal APK not found.' >&2
+            echo 'Signed universal release APK not found.' >&2
             find src-tauri/gen/android/app/build/outputs/apk \
               -type f -name '*.apk' || true
             exit 1
           fi
 
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" \
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" \
             verify --verbose --print-certs "$apk"
-
           sha256sum "$apk"
           echo "APK_PATH=$apk" >> "$GITHUB_ENV"
 
-      - name: Publish APK to GitHub Release
+      - name: Upload signed APK for main release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homecloud-tv-signed-apk
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Clean up temporary keystore
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${HC_TV_KEYSTORE_FILE:-}" ]; then
+            rm -f -- "$HC_TV_KEYSTORE_FILE"
+          fi
+
+  publish-release:
+    name: Publish verified APK to GitHub Release
+    needs: android-apk
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed APK
+        uses: actions/download-artifact@v4
+        with:
+          name: homecloud-tv-signed-apk
+          path: release-artifact
+
+      - name: Publish APK
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-
-          short_sha="${GITHUB_SHA:0:12}"
-          tag="tv-${short_sha}"
-          asset="${APK_PATH}#HomeCloud-TV-Player-${tag}-universal.apk"
-
-          echo "Commit: ${GITHUB_SHA}"
-          echo "Release tag: ${tag}"
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release exists. Updating APK..."
-            gh release upload "$tag" "$asset" --clobber
-          else
-            echo "Creating new release..."
-            gh release create "$tag" "$asset" \
-              --target "$GITHUB_SHA" \
-              --title "HomeCloud TV Player ${tag}" \
-              --generate-notes \
-              --latest
+          mapfile -t apks < <(find release-artifact -type f -name '*.apk')
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "Expected exactly one signed release APK, found ${#apks[@]}." >&2
+            exit 1
           fi
 
+          apk="${apks[0]}"
+          short_sha="${GITHUB_SHA:0:12}"
+          tag="tv-${short_sha}"
+          asset="${apk}#HomeCloud-TV-Player-${tag}-universal.apk"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$asset" --clobber
+          else
+            gh release create "$tag" "$asset" \
+              --target "$GITHUB_SHA" \
+              --title "HomeCloud TV Player $tag" \
+              --generate-notes --latest
+          fi
           echo "Release published successfully."
