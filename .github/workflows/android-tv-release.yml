@@ -42,7 +42,7 @@ jobs:
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android 37 and NDK
         shell: bash
@@ -89,6 +89,10 @@ jobs:
           python3 .github/scripts/prepare_android.py --ci
 
       - name: Build release Universal APK (all ABIs)
+        env:
+          HC_TV_STORE_PASSWORD: ${{ secrets.HC_TV_STORE_PASSWORD }}
+          HC_TV_KEY_PASSWORD: ${{ secrets.HC_TV_KEY_PASSWORD }}
+          HC_TV_KEY_ALIAS: ${{ secrets.HC_TV_KEY_ALIAS }}
         run: npm run tauri android build -- --apk --ci
 
       - name: Locate and verify signed APK
