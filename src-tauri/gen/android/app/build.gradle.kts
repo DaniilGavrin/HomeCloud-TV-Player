@@ -24,16 +24,20 @@ val tauriProperties = Properties().apply {
 // ByteWizard release signature: presence AND actual credentials verification
 // -----------------------------------------------------------------------------
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreFile = file("C:/Users/user/bytewizard-rs-release.jks")
+val keystoreFile = System.getenv("HC_TV_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }?.let { file(it) }
+  ?: file("C:/Users/user/bytewizard-rs-release.jks")
 val keystoreProperties = Properties().apply {
   if (keystorePropertiesFile.isFile) {
     keystorePropertiesFile.inputStream().use { load(it) }
   }
 }
 
-val releaseStorePassword = keystoreProperties.getProperty("storePassword").orEmpty()
-val releaseKeyAlias = keystoreProperties.getProperty("keyAlias")?.trim().orEmpty()
-val releaseKeyPassword = keystoreProperties.getProperty("keyPassword").orEmpty()
+val releaseStorePassword = System.getenv("HC_TV_STORE_PASSWORD")
+  ?: keystoreProperties.getProperty("storePassword").orEmpty()
+val releaseKeyAlias = (System.getenv("HC_TV_KEY_ALIAS")
+  ?: keystoreProperties.getProperty("keyAlias")).orEmpty().trim()
+val releaseKeyPassword = System.getenv("HC_TV_KEY_PASSWORD")
+  ?: keystoreProperties.getProperty("keyPassword").orEmpty()
 
 println("")
 println("========== HOMECLOUD TV PLAYER: RELEASE SIGNING ==========")
@@ -46,8 +50,8 @@ println("storePassword   : ${if (releaseStorePassword.isNotBlank()) "LOADED (hid
 println("keyAlias        : ${if (releaseKeyAlias.isNotEmpty()) releaseKeyAlias else "MISSING"}")
 println("keyPassword     : ${if (releaseKeyPassword.isNotBlank()) "LOADED (hidden)" else "MISSING"}")
 
-if (!keystorePropertiesFile.isFile) {
-  throw GradleException("SIGNING ERROR: keystore.properties не найден: ${keystorePropertiesFile.absolutePath}")
+if (!keystorePropertiesFile.isFile && System.getenv("HC_TV_STORE_PASSWORD").isNullOrBlank()) {
+  throw GradleException("SIGNING ERROR: отсутствуют keystore.properties или переменные окружения подписи")
 }
 if (!keystoreFile.isFile) {
   throw GradleException("SIGNING ERROR: JKS не найден: ${keystoreFile.absolutePath}")
