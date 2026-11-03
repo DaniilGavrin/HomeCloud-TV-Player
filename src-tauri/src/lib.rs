@@ -8,7 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[derive(Default)]
@@ -16,6 +16,7 @@ struct WsRuntime {
     // A new connection or explicit disconnect invalidates all earlier attempts.
     generation: Arc<AtomicU64>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
+    outbound: Mutex<Option<mpsc::Sender<String>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -57,6 +58,7 @@ async fn ws_connect(
     if let Some(stop) = runtime.stop.lock().await.take() {
         let _ = stop.send(());
     }
+    *runtime.outbound.lock().await = None;
 
     let (mut socket, _) = tokio::time::timeout(
         Duration::from_secs(9), connect_async(url.as_str()),
@@ -99,6 +101,7 @@ async fn ws_connect(
     }
 
     let (tx, mut rx) = oneshot::channel::<()>();
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(128);
     {
         let mut active = runtime.stop.lock().await;
         if runtime.generation.load(Ordering::SeqCst) != attempt {
@@ -106,13 +109,28 @@ async fn ws_connect(
         }
         *active = Some(tx);
     }
+    *runtime.outbound.lock().await = Some(outbound_tx);
 
     emit_status(&app, "connected", "Сервер подтвердил подключение");
     let generation = runtime.generation.clone();
     tauri::async_runtime::spawn(async move {
+        // Subscribe before requesting a snapshot; no gap between stream and
+        // snapshot after reconnect. The UI disregards older versions.
+        for topic in ["media.room.changed", "media.room.closed"] {
+            let req = json!({"v":1,"id":format!("tv-sub-{topic}"),"type":"subscribe","topic":topic});
+            if socket.send(Message::Text(req.to_string().into())).await.is_err() { return; }
+        }
+        let snapshot = json!({"v":1,"id":"tv-init-snapshot","type":"command","action":"media.rooms.snapshot","data":{}});
+        if socket.send(Message::Text(snapshot.to_string().into())).await.is_err() { return; }
         loop {
             tokio::select! {
                 _ = &mut rx => break,
+                outgoing = outbound_rx.recv() => match outgoing {
+                    Some(payload) => {
+                        if socket.send(Message::Text(payload.into())).await.is_err() { break; }
+                    }
+                    None => break,
+                },
                 next = socket.next() => match next {
                     Some(Ok(Message::Ping(_))) => {
                         // tungstenite queues automatic PONG; flush its queued reply.
@@ -120,7 +138,16 @@ async fn ws_connect(
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
-                    Some(Ok(_)) => { /* Media/commands belong to later TV Player tasks. */ }
+                    Some(Ok(Message::Text(raw))) => {
+                        if let Ok(message) = serde_json::from_str::<Value>(raw.as_str()) {
+                            // The event contains ONLY control metadata; video bytes
+                            // never travel through this Backend socket.
+                            if generation.load(Ordering::SeqCst) == attempt {
+                                let _ = app.emit("tv-player-ws-message", message);
+                            }
+                        }
+                    }
+                    Some(Ok(_)) => {}
                 },
             }
         }
@@ -132,9 +159,29 @@ async fn ws_connect(
     Ok(())
 }
 
+// The frontend may issue only known media control/observation actions.
+// In particular it cannot send arbitrary JSON from an untrusted page.
+#[tauri::command]
+async fn ws_media_command(
+    runtime: State<'_, WsRuntime>, action: String, data: Value, id: String,
+) -> Result<(), String> {
+    if !matches!(action.as_str(),
+        "media.rooms.snapshot" | "media.room.heartbeat" | "media.room.participant" |
+        "media.room.control" | "media.room.control.ack" | "media.room.report") {
+        return Err("Unsupported TV command".into());
+    }
+    if id.is_empty() || id.len() > 128 || !data.is_object() {
+        return Err("Invalid TV command payload".into());
+    }
+    let sender = runtime.outbound.lock().await.clone().ok_or("TV is not connected")?;
+    let msg = json!({"v":1,"id":id,"type":"command","action":action,"data":data});
+    sender.send(msg.to_string()).await.map_err(|_| "TV control channel disconnected".to_string())
+}
+
 #[tauri::command]
 async fn ws_disconnect(app: AppHandle, runtime: State<'_, WsRuntime>) -> Result<(), String> {
     runtime.generation.fetch_add(1, Ordering::SeqCst);
+    *runtime.outbound.lock().await = None;
     if let Some(stop) = runtime.stop.lock().await.take() {
         let _ = stop.send(());
     }
@@ -147,7 +194,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(WsRuntime::default())
         .manage(discovery::DiscoveryRuntime::default())
-        .invoke_handler(tauri::generate_handler![ws_connect, ws_disconnect, discovery::discover_lan_servers, discovery::cancel_lan_discovery])
+        .invoke_handler(tauri::generate_handler![ws_connect, ws_disconnect, ws_media_command, discovery::discover_lan_servers, discovery::cancel_lan_discovery])
         .run(tauri::generate_context!())
         .expect("error while running TV Player");
 }
