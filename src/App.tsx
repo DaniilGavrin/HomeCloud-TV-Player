@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { AnimatePresence } from 'motion/react';
 import { GlassStage } from './components/GlassStage';
@@ -8,6 +8,8 @@ import { ManualServerScreen } from './features/onboarding/ManualServerScreen';
 import { DiscoveryScreen } from './features/onboarding/DiscoveryScreen';
 import { ConnectingScreen } from './features/onboarding/ConnectingScreen';
 import { ConnectedScreen } from './features/onboarding/ConnectedScreen';
+import { RoomPlaceholder } from './lib/RoomPlaceholder';
+import { getRoomLifecycle, subscribeRoomLifecycle } from './lib/roomLifecycle';
 import { connectToHomeCloud, disconnectHomeCloud } from './lib/connection';
 import { getSavedServer, saveServer } from './lib/serverStorage';
 import './App.css';
@@ -27,6 +29,7 @@ const titles: Record<Screen, string> = {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash');
+  const roomView = useSyncExternalStore(subscribeRoomLifecycle, getRoomLifecycle, getRoomLifecycle);
   const [address, setAddress] = useState(() => getSavedServer() ?? '');
   const [error, setError] = useState<string | null>(null);
   // Distinguishes an old/cancelled connection result from the current attempt.
@@ -120,6 +123,7 @@ export default function App() {
           </GlassStage>
         </AnimatePresence>
       </div>
+      {screen === 'connected' && roomView && <RoomPlaceholder room={roomView} />}
     </main>
   );
 }

@@ -1,0 +1,27 @@
+/* KAN-54: compositor-friendly fullscreen room placeholder; no video decoder. */
+.hc-room-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #090f1b;
+  color: #f4f8ff;
+  padding: clamp(18px, 4vw, 64px);
+}
+.hc-room-message { width: min(850px, 100%); text-align: center; }
+.hc-room-kicker { letter-spacing: .18em; text-transform: uppercase; opacity: .65; font-size: 14px; }
+.hc-room-message h1 { font-size: clamp(27px, 4vw, 54px); font-weight: 600; margin: 24px 0 12px; }
+.hc-room-message p { line-height: 1.55; font-size: clamp(17px, 2.2vw, 23px); }
+.hc-room-stop {
+  margin-top: 30px;
+  padding: 14px 26px;
+  border-radius: 12px;
+  border: 1px solid rgba(235, 247, 255, .5);
+  background: rgba(70, 106, 142, .32);
+  color: inherit;
+  font-size: 19px;
+  cursor: pointer;
+}
+.hc-room-stop:focus-visible { outline: 3px solid #a6d9ff; outline-offset: 4px; }

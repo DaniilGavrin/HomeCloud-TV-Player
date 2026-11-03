@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getDeviceId } from './serverStorage';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
+import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
 
 function obj(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -24,6 +25,7 @@ export function MediaControlBridge() {
       if (next.instance_id !== lastInstance) { lastInstance = next.instance_id; lastVersion = 0; }
       if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id || room.attach_epoch !== next.attach_epoch) { reportSequence = 0; lastControlSequence = 0; }
       lastVersion = Math.max(lastVersion, next.sequence);
+      if (!publishRoomLifecycle(next)) return;
       room = next;
       // Recover an offer that arrived before the React listener mounted.
       // This acknowledges room metadata only, NEVER decoder readiness.
@@ -51,7 +53,17 @@ export function MediaControlBridge() {
       if (disposed) return;
       if (message.type === 'result' && message.action === 'media.rooms.snapshot') {
         const data = obj(message.data);
-        if (Array.isArray(data?.rooms)) for (const item of data.rooms) install(item);
+        if (Array.isArray(data?.rooms) && typeof data?.instance_id === 'string' && typeof data?.sequence === 'number') {
+          if (data.instance_id === lastInstance && data.sequence < lastVersion) return;
+          if (data.instance_id !== lastInstance) { lastInstance = data.instance_id; lastVersion = 0; }
+          const own = (data.rooms as unknown[]).map(parseRoom).filter((v): v is Room => v !== null);
+          const selected = own.find(v => v.target.device_id === getDeviceId()) ?? null;
+          if (selected) install(selected);
+          else { room = null; reportSequence = 0; lastControlSequence = 0; }
+          reconcileRoomLifecycle(own, getDeviceId(), data.instance_id, data.sequence);
+          lastInstance = data.instance_id;
+          lastVersion = Math.max(lastVersion, data.sequence);
+        }
       }
       if (message.type !== 'event') return;
       if (message.topic === 'media.room.changed') {
@@ -73,7 +85,14 @@ export function MediaControlBridge() {
       if (message.topic === 'media.room.closed') {
         const data = obj(message.data);
         const payload = obj(data?.payload) ?? data;
-        if (payload?.room_id === room?.room_id) { room = null; reportSequence = 0; lastControlSequence = 0; }
+        if (payload && room && payload.room_id === room.room_id) {
+          const seq = typeof payload.sequence === 'number' ? payload.sequence : undefined;
+          if (payload.instance_id === lastInstance && seq !== undefined && seq < lastVersion) return;
+          closeRoomLifecycle(room.room_id,
+            typeof payload.instance_id === 'string' ? payload.instance_id : undefined, seq);
+          if (seq !== undefined) lastVersion = Math.max(lastVersion, seq);
+          room = null; reportSequence = 0; lastControlSequence = 0;
+        }
       }
       if (message.topic !== 'media.room.control') return;
       const c = obj(message.data) as unknown as Control | null;
@@ -91,8 +110,17 @@ export function MediaControlBridge() {
     };
     const onKeyDown = (ev: KeyboardEvent) => {
       const current = room;
+      if (!current || ev.repeat) return;
+      if (ev.key === 'MediaStop' || ev.key === 'Escape' || ev.key === 'Backspace' || ev.key === 'BrowserBack') {
+        ev.preventDefault();
+        // Never tear down the UI on request: wait for authoritative CLOSED.
+        void send('media.rooms.stop', {
+          room_id: current.room_id, command_id: `tv-stop-${crypto.randomUUID()}`,
+        }).catch(console.error);
+        return;
+      }
       const video = player();
-      if (!current || !canExecute(video) || current.attach_epoch <= 0 || ev.repeat) return;
+      if (!canExecute(video) || current.attach_epoch <= 0) return;
       let action: string | null = null;
       let extra: Record<string, unknown> = {};
       switch (ev.key) {
@@ -119,7 +147,24 @@ export function MediaControlBridge() {
     };
     const onPlay = () => { void notifyObserved('PLAYING').catch(console.error); };
     const onPause = () => { void notifyObserved('PAUSED').catch(console.error); };
-    // A future video player can be attached without touching Backend routing.
+    const onEnded = (ev: Event) => {
+      const target = ev.target;
+      if (!(target instanceof HTMLVideoElement) || !target.matches('video[data-homecloud-media]') || !room) return;
+      void (async () => {
+        try { await notifyObserved('ENDED'); }
+        catch (e) { console.error('Unable to publish true decoder EOF', e); }
+        finally {
+          // Release the old decoder buffer, not the room or control WS.
+          target.pause();
+          target.removeAttribute('src');
+          target.srcObject = null;
+          target.load();
+        }
+      })();
+    };
+    // Capturing document listener also works when the actual video element is
+    // mounted AFTER the bridge (which is how the future player will work).
+    document.addEventListener('ended', onEnded, true);
     // Polling is avoided on low-power Android TV hardware.
     const video = player();
     video?.addEventListener('playing', onPlay);
@@ -146,6 +191,8 @@ export function MediaControlBridge() {
       window.removeEventListener('keydown', onKeyDown);
       video?.removeEventListener('playing', onPlay);
       video?.removeEventListener('pause', onPause);
+      document.removeEventListener('ended', onEnded, true);
+      resetRoomLifecycle();
     };
   }, []);
   return null;
