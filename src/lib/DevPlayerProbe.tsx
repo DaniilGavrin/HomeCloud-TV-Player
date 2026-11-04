@@ -1,7 +1,7 @@
 /**
- * KAN-74 TEMPORARY WS command adapter. Remove this file, its App mount and
- * scripts/Dev-Open-TVPlayer.ps1 after testing. Keep TVPlayerShell itself.
- * No fake Media Room or Gateway stream is created.
+ * KAN-74/KAN-75 TEMPORARY WS test adapter. Remove alongside
+ * scripts/Dev-Open-TVPlayer.ps1 after test completion.
+ * Back/D-pad navigation is owned by TVPlayerShell, not duplicated here.
  */
 import { useEffect, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -40,22 +40,9 @@ export function DevPlayerProbe() {
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
-    }).catch((err: unknown) => console.error('Temporary TV probe listener:', err));
+    }).catch((error: unknown) => console.error('Temporary TV probe listener:', error));
     return () => { disposed = true; unlisten?.(); };
   }, []);
-
-  useEffect(() => {
-    if (!probe) return;
-    const onBack = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' || event.key === 'Backspace' || event.key === 'BrowserBack' || event.key === 'MediaStop') {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        setProbe(null);
-      }
-    };
-    window.addEventListener('keydown', onBack, true);
-    return () => window.removeEventListener('keydown', onBack, true);
-  }, [probe]);
 
   return probe ? <TVPlayerShell title={probe.title} testMode onClose={() => setProbe(null)} /> : null;
 }
