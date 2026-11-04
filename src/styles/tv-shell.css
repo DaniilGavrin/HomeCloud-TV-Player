@@ -254,3 +254,11 @@
   );
 }
 /* HC-TV-GLASS-V2-END */
+
+/* HC-TV-PERF-KAN74: Static glass instead of full-screen blur compositing. */
+.tv-glass-stage {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  will-change: auto;
+}
+.tv-glass-content { will-change: auto; }

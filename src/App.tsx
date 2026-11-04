@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { AnimatePresence } from 'motion/react';
 import { GlassStage } from './components/GlassStage';
 import { SplashScreen } from './features/onboarding/SplashScreen';
 import { ChooseServerScreen } from './features/onboarding/ChooseServerScreen';
@@ -9,6 +8,7 @@ import { DiscoveryScreen } from './features/onboarding/DiscoveryScreen';
 import { ConnectingScreen } from './features/onboarding/ConnectingScreen';
 import { ConnectedScreen } from './features/onboarding/ConnectedScreen';
 import { RoomPlaceholder } from './lib/RoomPlaceholder';
+import { DevPlayerProbe } from './lib/DevPlayerProbe';
 import { getRoomLifecycle, subscribeRoomLifecycle } from './lib/roomLifecycle';
 import { connectToHomeCloud, disconnectHomeCloud } from './lib/connection';
 import { getSavedServer, saveServer } from './lib/serverStorage';
@@ -99,8 +99,7 @@ export default function App() {
       <div className="tv-background" aria-hidden="true" />
       <div className="tv-backdrop-dim" aria-hidden="true" />
       <div className="tv-stage-wrapper">
-        <AnimatePresence mode="wait">
-          <GlassStage key={screen} screenName={titles[screen]}>
+        <GlassStage screenName={titles[screen]}>
             {screen === 'splash' && <SplashScreen />}
             {screen === 'choose' && (
               <ChooseServerScreen
@@ -120,10 +119,10 @@ export default function App() {
             {screen === 'discovery' && <DiscoveryScreen onBack={() => setScreen('choose')} onSelect={(url) => { setAddress(url); void connect(url); }} />}
             {screen === 'connecting' && <ConnectingScreen onBack={cancelConnection} />}
             {screen === 'connected' && <ConnectedScreen />}
-          </GlassStage>
-        </AnimatePresence>
+        </GlassStage>
       </div>
       {screen === 'connected' && roomView && <RoomPlaceholder room={roomView} />}
+      {screen === 'connected' && <DevPlayerProbe />}
     </main>
   );
 }
