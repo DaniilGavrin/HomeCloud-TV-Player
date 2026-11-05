@@ -5,7 +5,7 @@
  * - OK / D-pad reveals controls again with Play/Pause focused.
  * - Previous/next are intentionally NOT a media queue: they seek -/+10s.
  * - One HTMLVideoElement plays BOTH video and audio-only media with the same
- *   remote/D-pad controls. Audio mode hides the video plane and shows artwork.
+ *   remote/D-pad controls. Audio mode hides the picture entirely.
  * - A real media element supplies timeline, duration, playback and seekability.
  * - In temporary KAN-74 testMode only, a packaged local video exercises the
  *   real decoder and controls without claiming a Media Gateway stream.
@@ -242,10 +242,10 @@ export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, testMode 
         ref={videoRef}
         className={`hc-tv-player__video${mediaKind === 'audio' ? ' hc-tv-player__video--audio' : ''}`}
         data-homecloud-media={testMode ? undefined : ''}
-        src={testMode ? '/hc-tv-control-test.mp4' : sourceUrl}
+        src={sourceUrl ?? (testMode ? '/hc-tv-control-test.mp4' : undefined)}
         preload={testMode || sourceUrl ? 'auto' : 'none'}
         autoPlay={testMode || Boolean(sourceUrl)}
-        muted={testMode}
+        muted={testMode && mediaKind === 'video'}
         playsInline
         aria-label={mediaKind === 'audio' ? 'Аудиоплеер HomeCloud' : 'Видеоплеер HomeCloud'}
         onLoadedMetadata={updateFromVideo}
@@ -258,11 +258,6 @@ export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, testMode 
         onError={() => setNotice('Не удалось загрузить медиафайл')}
       />
       <div className="hc-tv-player__background" aria-hidden="true" />
-      {mediaKind === 'audio' && (
-        <div className="hc-tv-player__audio-art" aria-hidden="true">
-          <img src="/icon.png" alt="" draggable={false} />
-        </div>
-      )}
       {/* A small bottom overlay: no central UI and no full-screen blur. */}
       <div
         className={`hc-tv-player__hud${visible ? ' hc-tv-player__hud--visible' : ''}`}
