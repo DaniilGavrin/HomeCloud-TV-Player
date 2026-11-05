@@ -11,8 +11,9 @@ and optionally sourceUrl. That URL is NOT derived from a TV-supplied command:
 only a future Backend-authorized Gateway transport may supply a media source.
 No arbitrary disk path, endpoint or TV client input should select a file.
 
-The local video probe remains intact, but its test video cannot report real
-room playback. Real decoder events use capturing document listeners so
+The dev probe now has separate video and audio test modes. Audio mode
+uses an 8-second, low-volume generated PCM/WAV tone without an external URL
+or a committed media binary. Its test playback cannot report real room events. Real decoder events use capturing document listeners so
 late-mounted players report PLAYING / PAUSED / ENDED.
 
 **This stage does NOT implement the remote media transport, HCM1 binary
@@ -22,3 +23,11 @@ the authorized media pipeline has been connected.
 
 Checks: npm ci && npm run build. Later physical-TV tests should cover
 audio-only appearance, audio volume, pause, seek, EOF and real video.
+
+Audio demo on a connected TV (after building this PR):
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Dev-Open-TVPlayer.ps1 -MediaKind audio
+
+Video remains the default MediaKind. The audio demo draws no image; D-pad
+reveals the common bottom controls. Autoplay may require pressing Play on
+Android TV WebView.
