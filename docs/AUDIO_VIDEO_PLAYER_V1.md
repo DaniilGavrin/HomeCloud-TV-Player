@@ -3,8 +3,8 @@
 Audio and video use one HTMLVideoElement internally. This can play audio-only
 media while rendering no picture. It preserves the KAN-52 Backend control
 adapter (play/pause/volume) and decoder EOF reporting. The compact bottom
-D-pad overlay is shared unchanged. Audio mode hides the video plane and shows
-the local public/icon.png artwork, with no animated blur.
+D-pad overlay is shared unchanged. Audio mode hides the video plane completely; no
+cover artwork or video picture is displayed.
 
 TVPlayerShell now accepts mediaKind = "audio" | "video" (default video),
 and optionally sourceUrl. That URL is NOT derived from a TV-supplied command:
