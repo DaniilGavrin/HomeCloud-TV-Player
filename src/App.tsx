@@ -8,6 +8,10 @@ import { DiscoveryScreen } from './features/onboarding/DiscoveryScreen';
 import { ConnectingScreen } from './features/onboarding/ConnectingScreen';
 import { ConnectedScreen } from './features/onboarding/ConnectedScreen';
 import { RoomPlaceholder } from './lib/RoomPlaceholder';
+import { TVPlayerShell } from './components/TVPlayerShell';
+import { getStreamState, sameStream, subscribeStreamState } from './lib/mediaStream';
+import { send } from './lib/mediaControls';
+import { createUUID } from './lib/uuid';
 import { DevPlayerProbe } from './lib/DevPlayerProbe';
 import { getRoomLifecycle, subscribeRoomLifecycle } from './lib/roomLifecycle';
 import { connectToHomeCloud, disconnectHomeCloud } from './lib/connection';
@@ -30,6 +34,10 @@ const titles: Record<Screen, string> = {
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash');
   const roomView = useSyncExternalStore(subscribeRoomLifecycle, getRoomLifecycle, getRoomLifecycle);
+  const streamView = useSyncExternalStore(subscribeStreamState, getStreamState, getStreamState);
+  const playingRoom = Boolean(roomView && streamView?.phase === 'ready' &&
+    streamView.url && sameStream(roomView,streamView) &&
+    roomView.playback_state !== 'ENDED' && roomView.playback_state !== 'IDLE');
   const [address, setAddress] = useState(() => getSavedServer() ?? '');
   const [error, setError] = useState<string | null>(null);
   // Distinguishes an old/cancelled connection result from the current attempt.
@@ -121,7 +129,21 @@ export default function App() {
             {screen === 'connected' && <ConnectedScreen />}
         </GlassStage>
       </div>
-      {screen === 'connected' && roomView && <RoomPlaceholder room={roomView} />}
+      {screen === 'connected' && roomView && (
+        playingRoom && streamView?.url ? (
+          <TVPlayerShell
+            key={`${roomView.room_id}:${roomView.playback_id}:${roomView.generation}`}
+            title="HomeCloud Media"
+            sourceUrl={streamView.url}
+            mediaKind={streamView.kind ?? 'video'}
+            onClose={() => {
+              void send('media.rooms.stop', {
+                room_id:roomView.room_id,command_id:`tv-stop-${createUUID()}`,
+              }).catch(console.error);
+            }}
+          />
+        ) : <RoomPlaceholder room={roomView} />
+      )}
       {screen === 'connected' && <DevPlayerProbe />}
     </main>
   );
