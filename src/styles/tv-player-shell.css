@@ -203,25 +203,8 @@
   .hc-tv-player__hud, .hc-tv-player__control { transition: none; }
 }
 
-/* Audio-only playback: keep the same <video> decoder for KAN-52 control and
-   decoder EOF reporting, but never render a black video surface. No animation. */
+/* Audio-only: preserve the HTMLVideoElement for KAN-52 commands and EOF,
+   while rendering no picture at all. */
 .hc-tv-player__video--audio {
   opacity: 0;
-}
-.hc-tv-player__audio-art {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-.hc-tv-player__audio-art img {
-  display: block;
-  width: min(26vh, 16vw, 200px);
-  max-width: 32%;
-  aspect-ratio: 1;
-  object-fit: contain;
-  filter: drop-shadow(0 8px 28px rgba(15, 92, 157, .23));
 }
