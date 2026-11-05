@@ -4,6 +4,7 @@ import { getDeviceId } from './serverStorage';
 import { createUUID } from './uuid';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
 import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
+import { attachRoomStream, getStreamState, resetStream, sameStream } from './mediaStream';
 
 function isRealMediaEvent(event: Event): boolean {
   return event.target instanceof HTMLVideoElement &&
@@ -24,6 +25,7 @@ export function MediaControlBridge() {
     let lastControlSequence = 0;
     let lastInstance = '';
     let lastVersion = 0;
+    let ticketRequestKey = '';
     const install = (raw: unknown) => {
       const next = parseRoom(raw);
       if (next?.target.device_id !== getDeviceId()) return;
@@ -64,11 +66,29 @@ export function MediaControlBridge() {
           if (data.instance_id !== lastInstance) { lastInstance = data.instance_id; lastVersion = 0; }
           const own = (data.rooms as unknown[]).map(parseRoom).filter((v): v is Room => v !== null);
           const selected = own.find(v => v.target.device_id === getDeviceId()) ?? null;
-          if (selected) install(selected);
-          else { room = null; reportSequence = 0; lastControlSequence = 0; }
+          if (selected) {
+            install(selected);
+            const key = `${selected.room_id}/${selected.playback_id}/${selected.generation}`;
+            if (!sameStream(selected, getStreamState()) && ticketRequestKey !== key) {
+              ticketRequestKey = key;
+              void send('media.room.ticket', {room_id:selected.room_id}).catch(console.error);
+            }
+          } else {
+            room = null; reportSequence = 0; lastControlSequence = 0;
+            ticketRequestKey = '';
+            resetStream();
+          }
           reconcileRoomLifecycle(own, getDeviceId(), data.instance_id, data.sequence);
           lastInstance = data.instance_id;
           lastVersion = Math.max(lastVersion, data.sequence);
+        }
+      }
+      if (message.type === 'result' && message.action === 'media.room.ticket') {
+        const data = obj(message.data);
+        if (data && room && data.room_id === room.room_id &&
+            data.playback_id === room.playback_id) {
+          const sourceRoom = obj(room as unknown);
+          attachRoomStream({ ...data, gateway_ws_url: sourceRoom?.gateway_ws_url }, getDeviceId());
         }
       }
       if (message.type !== 'event') return;
@@ -81,6 +101,8 @@ export function MediaControlBridge() {
         // offer means the TV accepted room metadata, never that media is playing.
         const data = obj(message.data);
         if (data && obj(data.target)?.device_id === getDeviceId()) {
+          ticketRequestKey = `${data.room_id}/${data.playback_id}/${data.generation}`;
+          attachRoomStream(data, getDeviceId());
           await send('media.room.participant', {
             room_id: data.room_id, playback_id: data.playback_id,
             participant: 'tv', phase: 'APPLIED',
@@ -98,6 +120,8 @@ export function MediaControlBridge() {
             typeof payload.instance_id === 'string' ? payload.instance_id : undefined, seq);
           if (seq !== undefined) lastVersion = Math.max(lastVersion, seq);
           room = null; reportSequence = 0; lastControlSequence = 0;
+          ticketRequestKey = '';
+          resetStream();
         }
       }
       if (message.topic !== 'media.room.control') return;
@@ -204,6 +228,7 @@ export function MediaControlBridge() {
       document.removeEventListener('pause', onPause, true);
       document.removeEventListener('ended', onEnded, true);
       resetRoomLifecycle();
+      resetStream();
     };
   }, []);
   return null;
