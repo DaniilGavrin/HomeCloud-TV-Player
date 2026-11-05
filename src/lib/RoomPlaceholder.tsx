@@ -16,8 +16,8 @@ export function RoomPlaceholder({ room }: { room: RoomLifecycle }) {
     <section className="hc-room-fullscreen" aria-label="Комната просмотра">
       <div className="hc-room-message" role="status" aria-live="polite">
         <p className="hc-room-kicker">HomeCloud TV Player</p>
-        <h1>{ended ? 'Видео завершено' : 'Комната просмотра активна'}</h1>
-        <p>{ended ? 'Выберите следующий файл на панели HomeCloud. Комната продолжает работать.' : 'Медиаплеер будет подключён после готовности файлового сервиса и Media Gateway.'}</p>
+        <h1>{ended ? 'Воспроизведение завершено' : 'Комната просмотра активна'}</h1>
+        <p>{ended ? 'Выберите следующий файл на панели HomeCloud. Комната продолжает работать.' : 'Ожидание передачи аудио или видео через Media Gateway.'}</p>
         <button type="button" className="hc-room-stop" onClick={stop}>Остановить просмотр</button>
       </div>
     </section>
