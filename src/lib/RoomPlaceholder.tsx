@@ -1,5 +1,6 @@
 import type { RoomLifecycle } from './roomLifecycle';
 import { send } from './mediaControls';
+import { createUUID } from './uuid';
 import '../styles/tv-room.css';
 
 /** Temporary fullscreen lifecycle surface. KAN-54 does NOT create a decoder.
@@ -8,7 +9,7 @@ export function RoomPlaceholder({ room }: { room: RoomLifecycle }) {
   const ended = room.playback_state === 'ENDED' || room.playback_state === 'IDLE';
   const stop = () => {
     void send('media.rooms.stop', {
-      room_id: room.room_id, command_id: `tv-stop-${crypto.randomUUID()}`,
+      room_id: room.room_id, command_id: `tv-stop-${createUUID()}`,
     }).catch((e: unknown) => console.error('Stop Viewing failed', e));
   };
   return (

@@ -1,3 +1,5 @@
+import { createUUID } from './uuid';
+
 const SERVER_KEY = 'hctv:ws-url';
 const DEVICE_KEY = 'hctv:device-id';
 let sessionDeviceId: string | null = null;
@@ -19,7 +21,7 @@ export function getDeviceId(): string {
       return existing;
     }
   } catch { /* Continue without persistent storage. */ }
-  sessionDeviceId = `hc-tv-${crypto.randomUUID()}`;
+  sessionDeviceId = `hc-tv-${createUUID()}`;
   try { localStorage.setItem(DEVICE_KEY, sessionDeviceId); } catch { /* In-memory identity. */ }
   return sessionDeviceId;
 }

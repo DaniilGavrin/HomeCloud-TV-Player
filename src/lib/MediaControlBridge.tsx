@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getDeviceId } from './serverStorage';
+import { createUUID } from './uuid';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
 import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
 
@@ -115,7 +116,7 @@ export function MediaControlBridge() {
         ev.preventDefault();
         // Never tear down the UI on request: wait for authoritative CLOSED.
         void send('media.rooms.stop', {
-          room_id: current.room_id, command_id: `tv-stop-${crypto.randomUUID()}`,
+          room_id: current.room_id, command_id: `tv-stop-${createUUID()}`,
         }).catch(console.error);
         return;
       }
@@ -139,7 +140,7 @@ export function MediaControlBridge() {
           await applyToPlayer(video, { action: action!, ...extra });
           await send('media.room.control', {
             room_id: current.room_id, playback_id: current.playback_id,
-            generation: current.generation, command_id: `remote-${crypto.randomUUID()}`,
+            generation: current.generation, command_id: `remote-${createUUID()}`,
             action, ...extra,
           });
         } catch (error) { console.error('TV remote execution failed', error); }

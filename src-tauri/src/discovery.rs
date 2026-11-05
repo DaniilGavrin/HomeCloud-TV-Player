@@ -51,6 +51,7 @@ pub struct DiscoveryResult {
     networks: Vec<String>,
     checked: usize,
     truncated: bool,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -72,6 +73,17 @@ fn virtual_network(name: &str) -> bool {
     .any(|needle| n.contains(needle))
 }
 
+// Android TV wired NICs are commonly named eth0 and may hide their MAC.
+// An eligible private IPv4 address is stronger evidence than MAC visibility.
+fn eligible_lan_interface(name: &str, internal: bool) -> bool {
+    if internal || virtual_network(name) { return false; }
+    let lower = name.to_ascii_lowercase();
+    // Never scan mobile data interfaces, Android CLAT, or peer-to-peer links.
+    !["rmnet", "ccmni", "pdp", "clat", "p2p", "dummy", "ifb", "swlan", "ipsec"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
 fn prefix_length(netmask: Ipv4Addr) -> Option<u32> {
     let mask = u32::from(netmask);
     let prefix = mask.leading_ones();
@@ -91,28 +103,39 @@ fn subnet_candidates(local: Ipv4Addr, mask: Ipv4Addr) -> Vec<Ipv4Addr> {
     ((base + 1)..broadcast).map(Ipv4Addr::from).collect()
 }
 
-fn candidates() -> Result<(Vec<Candidate>, Vec<String>, bool), String> {
+fn candidates() -> Result<(Vec<Candidate>, Vec<String>, bool, Vec<String>), String> {
     let interfaces = NetworkInterface::show()
         .map_err(|e| format!("Не удалось прочитать сетевые интерфейсы: {e}"))?;
     let mut all = Vec::new();
     let mut networks = BTreeSet::new();
     let mut seen = HashSet::new();
     let mut truncated = false;
+    let mut diagnostics = Vec::new();
 
     for iface in interfaces {
-        if iface.internal || virtual_network(&iface.name) { continue; }
-        // A physical NIC generally has a MAC; permit adapters without a MAC
-        // only if clearly named as Ethernet/Wi-Fi. Avoid scanning tunnel IPs.
-        let lower = iface.name.to_lowercase();
-        let physical_name = ["ethernet", "wi-fi", "wifi", "wireless", "wlan", "lan", "беспровод", "ethernet"].iter().any(|key| lower.contains(key));
-        if iface.mac_addr.as_ref().is_none_or(|v| v.is_empty()) && !physical_name { continue; }
+        let eligible = eligible_lan_interface(&iface.name, iface.internal);
+        let ips = iface.addr.iter().filter_map(|addr| match addr {
+            Addr::V4(v4) => Some(v4.ip.to_string()),
+            _ => None,
+        }).collect::<Vec<_>>().join(",");
+        if diagnostics.len() < 20 {
+            diagnostics.push(format!("{}: IPv4=[{}], candidate={}", iface.name, ips, eligible));
+        }
+        if !eligible { continue; }
 
         for addr in iface.addr {
             let Addr::V4(ipv4) = addr else { continue; };
-            let Some(mask) = ipv4.netmask else { continue; };
+            if !ipv4.ip.is_private() { continue; }
+            // Some Android getifaddrs implementations omit netmask. If so,
+            // scan only the address's /24; never guess a broader LAN range.
+            let (mask, assumed) = match ipv4.netmask {
+                Some(value) if prefix_length(value).is_some() => (value, false),
+                _ => (Ipv4Addr::new(255, 255, 255, 0), true),
+            };
             let hosts = subnet_candidates(ipv4.ip, mask);
             if hosts.is_empty() { continue; }
-            networks.insert(format!("{} · {}/{}", iface.name, ipv4.ip, prefix_length(mask).unwrap_or(0)));
+            let note = if assumed { " (fallback /24)" } else { "" };
+            networks.insert(format!("{} · {}/{}{}", iface.name, ipv4.ip, prefix_length(mask).unwrap_or(24), note));
             for host in hosts {
                 if !seen.insert(host) { continue; }
                 if all.len() >= MAX_ADDRS { truncated = true; break; }
@@ -122,7 +145,7 @@ fn candidates() -> Result<(Vec<Candidate>, Vec<String>, bool), String> {
         }
         if truncated { break; }
     }
-    Ok((all, networks.into_iter().collect(), truncated))
+    Ok((all, networks.into_iter().collect(), truncated, diagnostics))
 }
 
 async fn bound_connection(source: Ipv4Addr, target: Ipv4Addr) -> Option<TcpStream> {
@@ -192,7 +215,7 @@ async fn probe(candidate: Candidate) -> Option<DiscoveredServer> {
 #[tauri::command]
 pub async fn discover_lan_servers(runtime: State<'_, DiscoveryRuntime>) -> Result<DiscoveryResult, String> {
     let generation = runtime.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let (hosts, networks, truncated) = candidates()?;
+    let (hosts, networks, truncated, diagnostics) = candidates()?;
     let checked = hosts.len();
     let mut stream = futures_util::stream::iter(hosts.into_iter().map(probe))
         .buffer_unordered(CONCURRENCY);
@@ -204,7 +227,7 @@ pub async fn discover_lan_servers(runtime: State<'_, DiscoveryRuntime>) -> Resul
         if let Some(server) = found { servers.push(server); }
     }
     servers.sort_by(|a, b| a.ip.parse::<Ipv4Addr>().ok().cmp(&b.ip.parse::<Ipv4Addr>().ok()));
-    Ok(DiscoveryResult { servers, networks, checked, truncated })
+    Ok(DiscoveryResult { servers, networks, checked, truncated, diagnostics })
 }
 
 #[tauri::command]
@@ -230,6 +253,17 @@ mod tests {
         assert_eq!(hosts.len(), 254);
         assert_eq!(hosts[0], Ipv4Addr::new(10,7,8,1));
     }
+    #[test]
+    fn android_ethernet_and_wifi_are_eligible_without_mac() {
+        assert!(eligible_lan_interface("eth0", false));
+        assert!(eligible_lan_interface("enp2s0", false));
+        assert!(eligible_lan_interface("wlan0", false));
+        assert!(!eligible_lan_interface("eth0", true));
+        assert!(!eligible_lan_interface("rmnet_data0", false));
+        assert!(!eligible_lan_interface("tun0", false));
+        assert!(!eligible_lan_interface("tailscale0", false));
+    }
+
     #[test]
     fn no_tailscale_or_loopback() {
         assert!(subnet_candidates(Ipv4Addr::new(100,82,22,45), Ipv4Addr::new(255,192,0,0)).is_empty());

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { createUUID } from './uuid';
 
 /** Room-state adapter for the control plane; a decoder must supply a live
  * video[data-homecloud-media] element before commands can be acknowledged. */
@@ -63,7 +64,7 @@ export function canExecute(video: HTMLVideoElement | null): video is HTMLVideoEl
 }
 
 export async function send(action: string, data: Record<string, unknown>): Promise<void> {
-  await invoke('ws_media_command', { action, data, id: `tv-${crypto.randomUUID()}` });
+  await invoke('ws_media_command', { action, data, id: `tv-${createUUID()}` });
 }
 export async function applyToPlayer(video: HTMLVideoElement, control: Pick<Control, 'action'|'volume'|'muted'>): Promise<void> {
   switch (control.action) {

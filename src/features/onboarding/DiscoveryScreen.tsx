@@ -15,6 +15,7 @@ interface ScanResult {
   networks: string[];
   checked: number;
   truncated: boolean;
+  diagnostics?: string[];
 }
 
 interface Props {
@@ -125,6 +126,13 @@ export function DiscoveryScreen({ onBack, onSelect }: Props) {
             Проверено адресов: {result.checked}
             {result.networks.length > 0 ? ` · Сети: ${result.networks.join(' · ')}` : ' · Нет подходящих локальных интерфейсов'}
             {result.truncated ? ' · Поиск ограничен 1024 адресами' : ''}
+          </p>
+        )}
+        {!searching && result && result.checked === 0 && (
+          <p className="tv-discovery-summary" role="status">
+            Интерфейсы Android: {result.diagnostics?.length
+              ? result.diagnostics.join(' · ')
+              : 'сетевая библиотека не вернула интерфейсы'}
           </p>
         )}
       </div>
