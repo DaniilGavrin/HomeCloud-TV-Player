@@ -4,7 +4,7 @@ import { getDeviceId } from './serverStorage';
 import { createUUID } from './uuid';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
 import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
-import { attachRoomStream, getStreamState, resetStream, sameStream } from './mediaStream';
+import { attachRoomStream, getStreamState, resetStream, sameStream, subscribeStreamState } from './mediaStream';
 
 function isRealMediaEvent(event: Event): boolean {
   return event.target instanceof HTMLVideoElement &&
@@ -26,15 +26,45 @@ export function MediaControlBridge() {
     let lastInstance = '';
     let lastVersion = 0;
     let ticketRequestKey = '';
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const onStreamChanged = () => {
+      const state = getStreamState();
+      if (state?.phase === 'ready') {
+        retryCount = 0;
+        if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+        return;
+      }
+      if (!room || !state || state.phase !== 'error' ||
+          !sameStream(room, state) || disposed || retryCount >= 3 || retryTimer !== null ||
+          state.detail === 'Gateway пока не предоставил совместимый источник') return;
+      const expectedRoom = room.room_id, expectedPlayback = room.playback_id;
+      retryCount += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (disposed || !room || room.room_id !== expectedRoom ||
+            room.playback_id !== expectedPlayback) return;
+        ticketRequestKey = '';
+        void send('media.room.ticket', {room_id:expectedRoom}).catch(console.error);
+      }, Math.min(750 * Math.pow(2, retryCount-1), 3500));
+    };
+    const unsubscribeStream = subscribeStreamState(onStreamChanged);
     const install = (raw: unknown) => {
       const next = parseRoom(raw);
       if (next?.target.device_id !== getDeviceId()) return;
       if (next.instance_id === lastInstance && next.sequence < lastVersion) return;
       if (next.instance_id !== lastInstance) { lastInstance = next.instance_id; lastVersion = 0; }
-      if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id || room.attach_epoch !== next.attach_epoch) { reportSequence = 0; lastControlSequence = 0; }
+      if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id || room.attach_epoch !== next.attach_epoch) {
+        reportSequence = 0; lastControlSequence = 0;
+        if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id) {
+          retryCount = 0;
+          if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+        }
+      }
       lastVersion = Math.max(lastVersion, next.sequence);
       if (!publishRoomLifecycle(next)) return;
       room = next;
+      onStreamChanged();
       // Recover an offer that arrived before the React listener mounted.
       // This acknowledges room metadata only, NEVER decoder readiness.
       const participants = obj(obj(raw)?.participants);
@@ -228,6 +258,8 @@ export function MediaControlBridge() {
       document.removeEventListener('pause', onPause, true);
       document.removeEventListener('ended', onEnded, true);
       resetRoomLifecycle();
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      unsubscribeStream();
       resetStream();
     };
   }, []);
