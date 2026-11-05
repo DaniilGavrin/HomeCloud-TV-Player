@@ -166,7 +166,7 @@ async fn ws_media_command(
     runtime: State<'_, WsRuntime>, action: String, data: Value, id: String,
 ) -> Result<(), String> {
     if !matches!(action.as_str(),
-        "media.rooms.snapshot" | "media.rooms.stop" | "media.room.heartbeat" | "media.room.participant" |
+        "media.rooms.snapshot" | "media.rooms.stop" | "media.room.ticket" | "media.room.heartbeat" | "media.room.participant" |
         "media.room.control" | "media.room.control.ack" | "media.room.report") {
         return Err("Unsupported TV command".into());
     }

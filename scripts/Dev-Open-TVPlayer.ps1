@@ -3,7 +3,8 @@
 param(
     [string]$Backend = 'ws://100.114.58.74:8080/ws',
     [string]$TvDeviceId = '',
-    [string]$Title = 'Проверка открытия плеера'
+    [string]$Title = 'Проверка открытия плеера',
+    [ValidateSet('video', 'audio')][string]$MediaKind = 'video'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,7 +83,7 @@ try {
         action = 'clients.send'
         data = @{
             target = $target
-            payload = @{ kind = 'dev.tv.player.open'; title = $Title }
+            payload = @{ kind = 'dev.tv.player.open'; title = $Title; media_kind = $MediaKind }
         }
     }
     $reply = Read-HC 'dev-open'
@@ -90,7 +91,7 @@ try {
         throw "Unexpected clients.send response: $($reply.type)"
     }
     Write-Host '[PASS] Test open event queued to TV.'
-    Write-Host 'Check the TV screen: it should show the fullscreen TEST MODE player.'
+    Write-Host "Check the TV screen: it should show the fullscreen TEST MODE $MediaKind player."
     Write-Host 'Note: queued is not a playback or screen-render acknowledgment.'
 } finally {
     $ws.Dispose()

@@ -202,3 +202,9 @@
 @media (prefers-reduced-motion: reduce) {
   .hc-tv-player__hud, .hc-tv-player__control { transition: none; }
 }
+
+/* Audio-only: preserve the HTMLVideoElement for KAN-52 commands and EOF,
+   while rendering no picture at all. */
+.hc-tv-player__video--audio {
+  opacity: 0;
+}

@@ -1,6 +1,5 @@
 import { motion, useReducedMotion } from 'motion/react';
 import '../../styles/tv-waiting.css';
-import { MediaControlBridge } from '../../lib/MediaControlBridge';
 
 /**
  * KAN-34 — Main connected screen.
@@ -12,7 +11,6 @@ export function ConnectedScreen() {
 
   return (
     <div className="tv-screen tv-waiting-screen" role="status" aria-live="polite">
-      <MediaControlBridge />
       <div className="tv-waiting-content">
         {/* Deliberately NOT a motion.div. The status spinner must keep turning
             even if the OS/WebView reports a reduced-motion preference. */}

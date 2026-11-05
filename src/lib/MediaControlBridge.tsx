@@ -4,6 +4,12 @@ import { getDeviceId } from './serverStorage';
 import { createUUID } from './uuid';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
 import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
+import { attachRoomStream, getStreamState, resetStream, sameStream, subscribeStreamState } from './mediaStream';
+
+function isRealMediaEvent(event: Event): boolean {
+  return event.target instanceof HTMLVideoElement &&
+    event.target.matches('video[data-homecloud-media]');
+}
 
 function obj(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -19,15 +25,46 @@ export function MediaControlBridge() {
     let lastControlSequence = 0;
     let lastInstance = '';
     let lastVersion = 0;
+    let ticketRequestKey = '';
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const onStreamChanged = () => {
+      const state = getStreamState();
+      if (state?.phase === 'ready') {
+        retryCount = 0;
+        if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+        return;
+      }
+      if (!room || !state || state.phase !== 'error' ||
+          !sameStream(room, state) || disposed || retryCount >= 3 || retryTimer !== null ||
+          state.detail === 'Gateway пока не предоставил совместимый источник') return;
+      const expectedRoom = room.room_id, expectedPlayback = room.playback_id;
+      retryCount += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (disposed || !room || room.room_id !== expectedRoom ||
+            room.playback_id !== expectedPlayback) return;
+        ticketRequestKey = '';
+        void send('media.room.ticket', {room_id:expectedRoom}).catch(console.error);
+      }, Math.min(750 * Math.pow(2, retryCount-1), 3500));
+    };
+    const unsubscribeStream = subscribeStreamState(onStreamChanged);
     const install = (raw: unknown) => {
       const next = parseRoom(raw);
       if (next?.target.device_id !== getDeviceId()) return;
       if (next.instance_id === lastInstance && next.sequence < lastVersion) return;
       if (next.instance_id !== lastInstance) { lastInstance = next.instance_id; lastVersion = 0; }
-      if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id || room.attach_epoch !== next.attach_epoch) { reportSequence = 0; lastControlSequence = 0; }
+      if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id || room.attach_epoch !== next.attach_epoch) {
+        reportSequence = 0; lastControlSequence = 0;
+        if (!room || room.room_id !== next.room_id || room.playback_id !== next.playback_id) {
+          retryCount = 0;
+          if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+        }
+      }
       lastVersion = Math.max(lastVersion, next.sequence);
       if (!publishRoomLifecycle(next)) return;
       room = next;
+      onStreamChanged();
       // Recover an offer that arrived before the React listener mounted.
       // This acknowledges room metadata only, NEVER decoder readiness.
       const participants = obj(obj(raw)?.participants);
@@ -59,11 +96,29 @@ export function MediaControlBridge() {
           if (data.instance_id !== lastInstance) { lastInstance = data.instance_id; lastVersion = 0; }
           const own = (data.rooms as unknown[]).map(parseRoom).filter((v): v is Room => v !== null);
           const selected = own.find(v => v.target.device_id === getDeviceId()) ?? null;
-          if (selected) install(selected);
-          else { room = null; reportSequence = 0; lastControlSequence = 0; }
+          if (selected) {
+            install(selected);
+            const key = `${selected.room_id}/${selected.playback_id}/${selected.generation}`;
+            if (!sameStream(selected, getStreamState()) && ticketRequestKey !== key) {
+              ticketRequestKey = key;
+              void send('media.room.ticket', {room_id:selected.room_id}).catch(console.error);
+            }
+          } else {
+            room = null; reportSequence = 0; lastControlSequence = 0;
+            ticketRequestKey = '';
+            resetStream();
+          }
           reconcileRoomLifecycle(own, getDeviceId(), data.instance_id, data.sequence);
           lastInstance = data.instance_id;
           lastVersion = Math.max(lastVersion, data.sequence);
+        }
+      }
+      if (message.type === 'result' && message.action === 'media.room.ticket') {
+        const data = obj(message.data);
+        if (data && room && data.room_id === room.room_id &&
+            data.playback_id === room.playback_id) {
+          const sourceRoom = obj(room as unknown);
+          attachRoomStream({ ...data, gateway_ws_url: sourceRoom?.gateway_ws_url }, getDeviceId());
         }
       }
       if (message.type !== 'event') return;
@@ -76,6 +131,8 @@ export function MediaControlBridge() {
         // offer means the TV accepted room metadata, never that media is playing.
         const data = obj(message.data);
         if (data && obj(data.target)?.device_id === getDeviceId()) {
+          ticketRequestKey = `${data.room_id}/${data.playback_id}/${data.generation}`;
+          attachRoomStream(data, getDeviceId());
           await send('media.room.participant', {
             room_id: data.room_id, playback_id: data.playback_id,
             participant: 'tv', phase: 'APPLIED',
@@ -93,6 +150,8 @@ export function MediaControlBridge() {
             typeof payload.instance_id === 'string' ? payload.instance_id : undefined, seq);
           if (seq !== undefined) lastVersion = Math.max(lastVersion, seq);
           room = null; reportSequence = 0; lastControlSequence = 0;
+          ticketRequestKey = '';
+          resetStream();
         }
       }
       if (message.topic !== 'media.room.control') return;
@@ -146,8 +205,15 @@ export function MediaControlBridge() {
         } catch (error) { console.error('TV remote execution failed', error); }
       })();
     };
-    const onPlay = () => { void notifyObserved('PLAYING').catch(console.error); };
-    const onPause = () => { void notifyObserved('PAUSED').catch(console.error); };
+    // Capture media events on the document. The real decoder is mounted only
+    // AFTER the room offer, so listeners attached to player() at bridge mount
+    // would silently miss PLAYING/PAUSED reports. Never report the demo player.
+    const onPlay = (ev: Event) => {
+      if (isRealMediaEvent(ev)) void notifyObserved('PLAYING').catch(console.error);
+    };
+    const onPause = (ev: Event) => {
+      if (isRealMediaEvent(ev)) void notifyObserved('PAUSED').catch(console.error);
+    };
     const onEnded = (ev: Event) => {
       const target = ev.target;
       if (!(target instanceof HTMLVideoElement) || !target.matches('video[data-homecloud-media]') || !room) return;
@@ -163,13 +229,11 @@ export function MediaControlBridge() {
         }
       })();
     };
-    // Capturing document listener also works when the actual video element is
-    // mounted AFTER the bridge (which is how the future player will work).
+    // Capturing listeners also work when the actual media element is mounted
+    // AFTER the bridge, without polling on a low-power Android TV.
     document.addEventListener('ended', onEnded, true);
-    // Polling is avoided on low-power Android TV hardware.
-    const video = player();
-    video?.addEventListener('playing', onPlay);
-    video?.addEventListener('pause', onPause);
+    document.addEventListener('playing', onPlay, true);
+    document.addEventListener('pause', onPause, true);
     window.addEventListener('keydown', onKeyDown);
     void listen<WSMessage>('tv-player-ws-message', (event) => { void onMessage(event.payload).catch(console.error); })
       .then((stop) => {
@@ -190,10 +254,13 @@ export function MediaControlBridge() {
       window.clearInterval(hb);
       unlisten?.();
       window.removeEventListener('keydown', onKeyDown);
-      video?.removeEventListener('playing', onPlay);
-      video?.removeEventListener('pause', onPause);
+      document.removeEventListener('playing', onPlay, true);
+      document.removeEventListener('pause', onPause, true);
       document.removeEventListener('ended', onEnded, true);
       resetRoomLifecycle();
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      unsubscribeStream();
+      resetStream();
     };
   }, []);
   return null;
