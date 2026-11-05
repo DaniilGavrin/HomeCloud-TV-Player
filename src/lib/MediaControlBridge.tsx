@@ -5,6 +5,11 @@ import { createUUID } from './uuid';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
 import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
 
+function isRealMediaEvent(event: Event): boolean {
+  return event.target instanceof HTMLVideoElement &&
+    event.target.matches('video[data-homecloud-media]');
+}
+
 function obj(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -146,8 +151,15 @@ export function MediaControlBridge() {
         } catch (error) { console.error('TV remote execution failed', error); }
       })();
     };
-    const onPlay = () => { void notifyObserved('PLAYING').catch(console.error); };
-    const onPause = () => { void notifyObserved('PAUSED').catch(console.error); };
+    // Capture media events on the document. The real decoder is mounted only
+    // AFTER the room offer, so listeners attached to player() at bridge mount
+    // would silently miss PLAYING/PAUSED reports. Never report the demo player.
+    const onPlay = (ev: Event) => {
+      if (isRealMediaEvent(ev)) void notifyObserved('PLAYING').catch(console.error);
+    };
+    const onPause = (ev: Event) => {
+      if (isRealMediaEvent(ev)) void notifyObserved('PAUSED').catch(console.error);
+    };
     const onEnded = (ev: Event) => {
       const target = ev.target;
       if (!(target instanceof HTMLVideoElement) || !target.matches('video[data-homecloud-media]') || !room) return;
@@ -163,13 +175,11 @@ export function MediaControlBridge() {
         }
       })();
     };
-    // Capturing document listener also works when the actual video element is
-    // mounted AFTER the bridge (which is how the future player will work).
+    // Capturing listeners also work when the actual media element is mounted
+    // AFTER the bridge, without polling on a low-power Android TV.
     document.addEventListener('ended', onEnded, true);
-    // Polling is avoided on low-power Android TV hardware.
-    const video = player();
-    video?.addEventListener('playing', onPlay);
-    video?.addEventListener('pause', onPause);
+    document.addEventListener('playing', onPlay, true);
+    document.addEventListener('pause', onPause, true);
     window.addEventListener('keydown', onKeyDown);
     void listen<WSMessage>('tv-player-ws-message', (event) => { void onMessage(event.payload).catch(console.error); })
       .then((stop) => {
@@ -190,8 +200,8 @@ export function MediaControlBridge() {
       window.clearInterval(hb);
       unlisten?.();
       window.removeEventListener('keydown', onKeyDown);
-      video?.removeEventListener('playing', onPlay);
-      video?.removeEventListener('pause', onPause);
+      document.removeEventListener('playing', onPlay, true);
+      document.removeEventListener('pause', onPause, true);
       document.removeEventListener('ended', onEnded, true);
       resetRoomLifecycle();
     };
