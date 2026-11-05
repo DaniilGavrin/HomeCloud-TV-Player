@@ -1,4 +1,4 @@
-name: HomeCloud TV Player — Android TV APK Release
+name: HomeCloud TV Player — Signed APK + AAB
 
 on:
   push:
@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  android-apk:
-    name: Build and verify universal Android APK
+  android-packages:
+    name: Build and verify signed universal APK + AAB
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
@@ -135,13 +135,19 @@ jobs:
           } >> "$GITHUB_ENV"
           echo 'Release signing credentials prepared securely.'
 
-      - name: Build universal release APK (all ABIs)
+      # Keep Android versionCode increasing for successive Google Play uploads.
+      # Tauri's --config JSON is merged with src-tauri/tauri.conf.json.
+      - name: Build signed universal APK and AAB (all ABIs)
         shell: bash
         run: |
           set -euo pipefail
           test -n "${HC_TV_KEYSTORE_FILE:-}"
           test -f "$HC_TV_KEYSTORE_FILE"
-          npm run tauri android build -- --apk --ci
+          version_code=$((100000 + GITHUB_RUN_NUMBER))
+          echo "ANDROID_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
+          echo "Android versionCode: $version_code"
+          npm run tauri android build -- --apk --aab --ci \
+            --config "{\"bundle\":{\"android\":{\"versionCode\":$version_code}}}"
 
       - name: Locate and verify signed APK
         shell: bash
@@ -164,6 +170,31 @@ jobs:
           sha256sum "$apk"
           echo "APK_PATH=$apk" >> "$GITHUB_ENV"
 
+      - name: Locate and verify signed AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/gen/android/app/build/outputs/bundle"
+          test -d "$bundle_dir"
+          mapfile -t bundles < <(find "$bundle_dir" -type f -name '*.aab' | sort)
+          if [ "${#bundles[@]}" -ne 1 ]; then
+            echo "Expected exactly one Android App Bundle, found ${#bundles[@]}." >&2
+            printf '%s\n' "${bundles[@]}" >&2
+            exit 1
+          fi
+          aab="${bundles[0]}"
+          jarsigner -verify -verbose "$aab" > "$RUNNER_TEMP/aab-signature-check.txt" 2>&1 || {
+            cat "$RUNNER_TEMP/aab-signature-check.txt" >&2
+            exit 1
+          }
+          if ! grep -q 'jar verified' "$RUNNER_TEMP/aab-signature-check.txt"; then
+            echo 'Android App Bundle signature verification did not report success.' >&2
+            exit 1
+          fi
+          echo "AAB signature verified."
+          sha256sum "$aab"
+          echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
+
       - name: Verify Android TV launcher in packaged APK
         shell: bash
         run: |
@@ -175,12 +206,14 @@ jobs:
           fi
           echo 'Packaged APK declares an Android TV launcher activity.'
 
-      - name: Upload signed APK for main release
+      - name: Upload signed APK and AAB for main release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: homecloud-tv-signed-apk
-          path: ${{ env.APK_PATH }}
+          name: homecloud-tv-signed-packages
+          path: |
+            ${{ env.APK_PATH }}
+            ${{ env.AAB_PATH }}
           if-no-files-found: error
           retention-days: 3
 
@@ -193,44 +226,47 @@ jobs:
           fi
 
   publish-release:
-    name: Publish verified APK to GitHub Release
-    needs: android-apk
+    name: Publish verified APK and AAB to GitHub Release
+    needs: android-packages
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
 
     steps:
-      - name: Download signed APK
+      - name: Download signed APK and AAB
         uses: actions/download-artifact@v4
         with:
-          name: homecloud-tv-signed-apk
+          name: homecloud-tv-signed-packages
           path: release-artifact
 
-      - name: Publish APK
+      - name: Publish APK and AAB
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t apks < <(find release-artifact -type f -name '*.apk')
-          if [ "${#apks[@]}" -ne 1 ]; then
-            echo "Expected exactly one signed release APK, found ${#apks[@]}." >&2
+          mapfile -t apks < <(find release-artifact -type f -name '*.apk' | sort)
+          mapfile -t aabs < <(find release-artifact -type f -name '*.aab' | sort)
+          if [ "${#apks[@]}" -ne 1 ] || [ "${#aabs[@]}" -ne 1 ]; then
+            echo "Expected exactly one APK and one AAB, found ${#apks[@]} APK and ${#aabs[@]} AAB." >&2
             exit 1
           fi
 
           apk="${apks[0]}"
+          aab="${aabs[0]}"
           short_sha="${GITHUB_SHA:0:12}"
           tag="tv-${short_sha}"
-          asset="${apk}#HomeCloud-TV-Player-${tag}-universal.apk"
+          apk_asset="${apk}#HomeCloud-TV-Player-${tag}-universal.apk"
+          aab_asset="${aab}#HomeCloud-TV-Player-${tag}-universal.aab"
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$asset" --clobber
+            gh release upload "$tag" "$apk_asset" "$aab_asset" --clobber
           else
-            gh release create "$tag" "$asset" \
+            gh release create "$tag" "$apk_asset" "$aab_asset" \
               --target "$GITHUB_SHA" \
               --title "HomeCloud TV Player $tag" \
               --generate-notes --latest
           fi
-          echo "Release published successfully."
+          echo "Release published with signed APK and AAB."
