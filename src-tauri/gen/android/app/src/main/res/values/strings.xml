@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">"TV Player"</string>
-    <string name="main_activity_title">"TV Player"</string>
+    <string name="app_name">HomeCloud TV Player</string>
+    <string name="main_activity_title">HomeCloud TV Player</string>
 </resources>

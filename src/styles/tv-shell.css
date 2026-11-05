@@ -262,3 +262,15 @@
   will-change: auto;
 }
 .tv-glass-content { will-change: auto; }
+/* TV app branding: static icon; no expensive fullscreen blur. */
+.tv-brand-logo {
+  display: block;
+  width: clamp(76px, 10vw, 116px);
+  height: clamp(76px, 10vw, 116px);
+  flex: none;
+  object-fit: contain;
+  margin: 0 auto 26px;
+}
+@media (max-height: 550px) {
+  .tv-brand-logo { width: 70px; height: 70px; margin-bottom: 14px; }
+}
