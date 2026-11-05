@@ -13,6 +13,7 @@ import { getStreamState, sameStream, subscribeStreamState } from './lib/mediaStr
 import { send } from './lib/mediaControls';
 import { createUUID } from './lib/uuid';
 import { DevPlayerProbe } from './lib/DevPlayerProbe';
+import { MediaControlBridge } from './lib/MediaControlBridge';
 import { getRoomLifecycle, subscribeRoomLifecycle } from './lib/roomLifecycle';
 import { connectToHomeCloud, disconnectHomeCloud } from './lib/connection';
 import { getSavedServer, saveServer } from './lib/serverStorage';
@@ -144,6 +145,7 @@ export default function App() {
           />
         ) : <RoomPlaceholder room={roomView} />
       )}
+      {screen === 'connected' && <MediaControlBridge />}
       {screen === 'connected' && <DevPlayerProbe />}
     </main>
   );
