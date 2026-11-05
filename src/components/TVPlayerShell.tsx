@@ -4,7 +4,9 @@
  * - Small bottom-only overlay: shown initially, auto-hidden in 3.5s.
  * - OK / D-pad reveals controls again with Play/Pause focused.
  * - Previous/next are intentionally NOT a media queue: they seek -/+10s.
- * - A real <video> supplies timeline, duration, playback and seekability.
+ * - One HTMLVideoElement plays BOTH video and audio-only media with the same
+ *   remote/D-pad controls. Audio mode hides the video plane and shows artwork.
+ * - A real media element supplies timeline, duration, playback and seekability.
  * - In temporary KAN-74 testMode only, a packaged local video exercises the
  *   real decoder and controls without claiming a Media Gateway stream.
  *
@@ -16,6 +18,10 @@ import '../styles/tv-player-shell.css';
 
 export interface TVPlayerShellProps {
   title: string;
+  /** Derived from trusted Gateway content type; audio and video share controls. */
+  mediaKind?: 'audio' | 'video';
+  /** Only supply a previously-authorized Gateway media URL; never from arbitrary TV commands. */
+  sourceUrl?: string;
   testMode?: boolean;
   onClose: () => void;
 }
@@ -45,7 +51,7 @@ function normalizedKey(event: KeyboardEvent): string {
   return event.key;
 }
 
-export function TVPlayerShell({ title, testMode = false, onClose }: TVPlayerShellProps) {
+export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, testMode = false, onClose }: TVPlayerShellProps) {
   const rootRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const backwardRef = useRef<HTMLButtonElement>(null);
@@ -111,7 +117,7 @@ export function TVPlayerShell({ title, testMode = false, onClose }: TVPlayerShel
   const togglePlay = useCallback(async () => {
     const video = videoRef.current;
     if (!video || video.readyState === HTMLMediaElement.HAVE_NOTHING) {
-      setNotice('Источник видео ещё не загружен');
+      setNotice('Медиаисточник ещё не загружен');
       return;
     }
     try {
@@ -129,7 +135,7 @@ export function TVPlayerShell({ title, testMode = false, onClose }: TVPlayerShel
     const video = videoRef.current;
     if (!video || video.readyState === HTMLMediaElement.HAVE_NOTHING ||
         !Number.isFinite(video.duration) || video.duration <= 0) {
-      setNotice('Перемотка доступна после загрузки видео');
+      setNotice('Перемотка доступна после загрузки медиафайла');
       return;
     }
     const next = Math.min(Math.max(0, seconds), video.duration);
@@ -234,14 +240,14 @@ export function TVPlayerShell({ title, testMode = false, onClose }: TVPlayerShel
     >
       <video
         ref={videoRef}
-        className="hc-tv-player__video"
-        data-homecloud-media
-        src={testMode ? '/hc-tv-control-test.mp4' : undefined}
-        preload={testMode ? 'auto' : 'none'}
-        autoPlay={testMode}
+        className={`hc-tv-player__video${mediaKind === 'audio' ? ' hc-tv-player__video--audio' : ''}`}
+        data-homecloud-media={testMode ? undefined : ''}
+        src={testMode ? '/hc-tv-control-test.mp4' : sourceUrl}
+        preload={testMode || sourceUrl ? 'auto' : 'none'}
+        autoPlay={testMode || Boolean(sourceUrl)}
         muted={testMode}
         playsInline
-        aria-label="Видеоплеер HomeCloud"
+        aria-label={mediaKind === 'audio' ? 'Аудиоплеер HomeCloud' : 'Видеоплеер HomeCloud'}
         onLoadedMetadata={updateFromVideo}
         onDurationChange={updateFromVideo}
         onTimeUpdate={updateFromVideo}
@@ -249,9 +255,14 @@ export function TVPlayerShell({ title, testMode = false, onClose }: TVPlayerShel
         onPlay={updateFromVideo}
         onPause={updateFromVideo}
         onEnded={updateFromVideo}
-        onError={() => setNotice('Не удалось загрузить тестовый видеофайл')}
+        onError={() => setNotice('Не удалось загрузить медиафайл')}
       />
       <div className="hc-tv-player__background" aria-hidden="true" />
+      {mediaKind === 'audio' && (
+        <div className="hc-tv-player__audio-art" aria-hidden="true">
+          <img src="/icon.png" alt="" draggable={false} />
+        </div>
+      )}
       {/* A small bottom overlay: no central UI and no full-screen blur. */}
       <div
         className={`hc-tv-player__hud${visible ? ' hc-tv-player__hud--visible' : ''}`}
@@ -326,7 +337,7 @@ export function TVPlayerShell({ title, testMode = false, onClose }: TVPlayerShel
           </div>
           {(notice || !hasMedia) && (
             <div className="hc-tv-player__notice" role="status">
-              {notice || 'Ожидание видеоисточника'}
+              {notice || 'Ожидание медиаисточника'}
             </div>
           )}
         </div>
