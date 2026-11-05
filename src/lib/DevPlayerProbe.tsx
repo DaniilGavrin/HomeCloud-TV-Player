@@ -5,9 +5,10 @@
  */
 import { useEffect, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { createTestAudioUrl } from './testAudio';
 import { TVPlayerShell } from '../components/TVPlayerShell';
 
-type Probe = { title: string };
+type Probe = { title: string; mediaKind: 'audio' | 'video' };
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -25,11 +26,18 @@ export function decodeDevPlayerOpen(message: unknown): Probe | null {
   const title = typeof payload.title === 'string' && payload.title.trim()
     ? payload.title.trim().slice(0, 80)
     : 'Тестовый запуск плеера';
-  return { title };
+  return { title, mediaKind: payload.media_kind === 'audio' ? 'audio' : 'video' };
 }
 
 export function DevPlayerProbe() {
   const [probe, setProbe] = useState<Probe | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | undefined>();
+  useEffect(() => {
+    if (probe?.mediaKind !== 'audio') { setAudioUrl(undefined); return; }
+    const url = createTestAudioUrl();
+    setAudioUrl(url);
+    return () => { URL.revokeObjectURL(url); };
+  }, [probe]);
   useEffect(() => {
     let disposed = false;
     let unlisten: UnlistenFn | undefined;
@@ -44,5 +52,9 @@ export function DevPlayerProbe() {
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
-  return probe ? <TVPlayerShell title={probe.title} testMode onClose={() => setProbe(null)} /> : null;
+  return probe ? (
+    <TVPlayerShell title={probe.title} mediaKind={probe.mediaKind}
+      sourceUrl={probe.mediaKind === 'audio' ? audioUrl : undefined}
+      testMode onClose={() => setProbe(null)} />
+  ) : null;
 }
