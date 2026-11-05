@@ -242,7 +242,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, testMode 
         ref={videoRef}
         className={`hc-tv-player__video${mediaKind === 'audio' ? ' hc-tv-player__video--audio' : ''}`}
         data-homecloud-media={testMode ? undefined : ''}
-        src={sourceUrl ?? (testMode ? '/hc-tv-control-test.mp4' : undefined)}
+        src={sourceUrl ?? (testMode && mediaKind === 'video' ? '/hc-tv-control-test.mp4' : undefined)}
         preload={testMode || sourceUrl ? 'auto' : 'none'}
         autoPlay={testMode || Boolean(sourceUrl)}
         muted={testMode && mediaKind === 'video'}
