@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { matchesPlaybackIdentity } from '../src/lib/playbackIdentity.ts';
 import { attachRoomStream, getStreamState, resetStream } from '../src/lib/mediaStream.ts';
+import { detectDecoderCapabilities } from '../src/lib/mediaCapabilities.ts';
 
 class MockWebSocket {
   static instances = [];
@@ -84,5 +85,44 @@ test('KAN-55 opted-in HTTP switch reuses one direct Gateway websocket', () => {
   control.onmessage({data:JSON.stringify({...ready('mkv',2), http_switch:true})});
   assert.equal(getStreamState().phase, 'ready');
   assert.equal(getStreamState().playback_id, 'mkv');
+  resetStream();
+});
+
+test('KAN-61 decoder report never invents profiles or maximum resolution', () => {
+  const report = detectDecoderCapabilities(
+    mime => mime.includes('audio/mpeg') ? 'probably' : mime.includes('avc1.') ? 'maybe' : '',
+    'ru-RU',
+  );
+  assert.equal(report.version, 1);
+  assert.equal(report.preferred_audio_language, 'rus');
+  const mp3 = report.formats.find(f => f.container === 'mp3');
+  assert.equal(mp3.certainty, 'probably');
+  const h264 = report.formats.find(f => f.video_codec === 'h264' && f.container === 'mp4');
+  assert.equal(h264.certainty, 'maybe');
+  assert.equal(h264.max_width, undefined);
+  assert.equal(h264.video_profiles, undefined);
+});
+
+test('KAN-61 stale inspection cannot overwrite a different playback generation', () => {
+  resetStream();
+  MockWebSocket.instances.length = 0;
+  attachRoomStream(offer(1, 'mp3', 'a'.repeat(64)), 'tv-1');
+  let socket = MockWebSocket.instances.at(-1);
+  socket.onopen();
+  const hello = JSON.parse(socket.sent[0]);
+  assert.equal(hello.capabilities.decoder.version, 1);
+  socket.onmessage({ data: JSON.stringify(ready('mp3', 1)) });
+  socket.onmessage({ data: JSON.stringify({ type:'media.inspection',room_id:'room-test',
+    playback_id:'mp3',generation:1,report:{ status:'READY',
+    media:{container:'mp3',tracks:[{index:0,kind:'audio',codec:'mp3'}]},
+    decision:{mode:'DIRECT',reason:'DECLARED_DECODER_COMPATIBLE'}} }) });
+  assert.equal(getStreamState().inspection.media.container, 'mp3');
+  attachRoomStream(offer(2, 'mkv', 'b'.repeat(64)), 'tv-1');
+  socket = MockWebSocket.instances.at(-1);
+  socket.onmessage({ data: JSON.stringify({ type:'media.inspection',room_id:'room-test',
+    playback_id:'mp3',generation:1,report:{status:'READY',
+    media:{container:'mp3',tracks:[]}}}) });
+  assert.equal(getStreamState().playback_id, 'mkv');
+  assert.equal(getStreamState().inspection, undefined);
   resetStream();
 });
