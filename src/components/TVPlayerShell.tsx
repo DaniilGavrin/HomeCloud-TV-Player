@@ -22,6 +22,9 @@ export interface TVPlayerShellProps {
   mediaKind?: 'audio' | 'video';
   /** Only supply a previously-authorized Gateway media URL; never from arbitrary TV commands. */
   sourceUrl?: string;
+  roomId?: string;
+  playbackId?: string;
+  generation?: number;
   testMode?: boolean;
   onClose: () => void;
 }
@@ -51,7 +54,7 @@ function normalizedKey(event: KeyboardEvent): string {
   return event.key;
 }
 
-export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, testMode = false, onClose }: TVPlayerShellProps) {
+export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, roomId, playbackId, generation, testMode = false, onClose }: TVPlayerShellProps) {
   const rootRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const backwardRef = useRef<HTMLButtonElement>(null);
@@ -242,6 +245,9 @@ export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, testMode 
         ref={videoRef}
         className={`hc-tv-player__video${mediaKind === 'audio' ? ' hc-tv-player__video--audio' : ''}`}
         data-homecloud-media={testMode ? undefined : ''}
+        data-room-id={testMode ? undefined : roomId}
+        data-playback-id={testMode ? undefined : playbackId}
+        data-generation={testMode ? undefined : generation}
         src={sourceUrl ?? (testMode && mediaKind === 'video' ? '/hc-tv-control-test.mp4' : undefined)}
         preload={testMode || sourceUrl ? 'auto' : 'none'}
         autoPlay={testMode || Boolean(sourceUrl)}
