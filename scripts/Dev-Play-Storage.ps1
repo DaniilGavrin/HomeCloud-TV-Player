@@ -2,6 +2,7 @@
 # Examples:
 # .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.168.0.147:8080/ws -StorageNodeId <id>
 # .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.168.0.147:8080/ws -StorageNodeId <id> -NodeId <backendNode> -FileId <file_id> -Play
+# To switch an active room without ROOM_CONFLICT, add -RoomId <room_id> to -Play.
 [CmdletBinding()]
 param(
     [string]$Backend = 'ws://192.168.0.147:8080/ws',
@@ -12,6 +13,7 @@ param(
     [string]$NodeId = '',
     [string]$TvDeviceId = '',
     [string]$FileId = '',
+    [string]$RoomId = '',
     [ValidateSet('lan','tailscale')][string]$Network = 'lan',
     [switch]$Play
 )
@@ -96,12 +98,16 @@ try {
     if (-not ($tvs | Where-Object { $_.device_id -eq $TvDeviceId })) {
         throw "TV '$TvDeviceId' is not online on this Backend."
     }
-    $outcome = Invoke-Control 'media.rooms.play' @{
+    $playData = @{
         command_id=('dev-play-' + [Guid]::NewGuid().ToString('N'))
         network=$Network
         target=@{node_id=$NodeId;device_id=$TvDeviceId}
         source=@{storage_node_id=$StorageNodeId;file_id=$FileId}
     }
+    if (-not [string]::IsNullOrWhiteSpace($RoomId)) {
+        $playData.room_id = $RoomId
+    }
+    $outcome = Invoke-Control 'media.rooms.play' $playData
     Write-Host '[PLAY RESULT]'
     $outcome | Format-List | Out-Host
     Write-Host '[CHECK] TV should open real HomeCloud player once the Gateway prepares the source and attaches.'
