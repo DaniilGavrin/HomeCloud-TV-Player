@@ -3,6 +3,7 @@
 # .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.168.0.147:8080/ws -StorageNodeId <id>
 # .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.168.0.147:8080/ws -StorageNodeId <id> -NodeId <backendNode> -FileId <file_id> -Play
 # To switch an active room without ROOM_CONFLICT, add -RoomId <room_id> to -Play.
+# -ListRooms prints authoritative active rooms. -Stop -RoomId <id> closes one.
 [CmdletBinding()]
 param(
     [string]$Backend = 'ws://192.168.0.147:8080/ws',
@@ -15,6 +16,8 @@ param(
     [string]$FileId = '',
     [string]$RoomId = '',
     [ValidateSet('lan','tailscale')][string]$Network = 'lan',
+    [switch]$ListRooms,
+    [switch]$Stop,
     [switch]$Play
 )
 $ErrorActionPreference = 'Stop'
@@ -23,6 +26,8 @@ if ($uri.Scheme -notin @('ws','wss') -or !$uri.Host -or $uri.AbsolutePath -ne '/
     throw "Backend must be an explicit ws://IP:PORT/ws or wss://IP:PORT/ws"
 }
 if ([string]::IsNullOrWhiteSpace($StorageNodeId)) { throw 'StorageNodeId required' }
+if ($Stop -and $Play) { throw '-Stop and -Play are mutually exclusive.' }
+if ($Stop -and [string]::IsNullOrWhiteSpace($RoomId)) { throw '-Stop requires an explicit -RoomId.' }
 $socket = [System.Net.WebSockets.ClientWebSocket]::new()
 $timeout = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(20))
 $utf8 = [System.Text.Encoding]::UTF8
@@ -74,6 +79,22 @@ try {
     $tvs = @($clients | Where-Object { $_.client_type -eq 'tv' })
     Write-Host "[TV DEVICES]"
     $tvs | Select-Object device_id,client_type | Format-Table | Out-Host
+    if ($ListRooms) {
+        $rooms = @(Invoke-Control 'media.rooms.list' @{})
+        Write-Host '[ROOMS]'
+        $rooms | Select-Object room_id,playback_id,generation,room_state,playback_state |
+            Format-Table -Wrap | Out-Host
+        if (-not $Play -and -not $Stop) { return }
+    }
+    if ($Stop) {
+        $closed = Invoke-Control 'media.rooms.stop' @{
+            command_id=('dev-stop-' + [Guid]::NewGuid().ToString('N'))
+            room_id=$RoomId
+        }
+        Write-Host '[STOP RESULT]'
+        $closed | Format-List | Out-Host
+        return
+    }
     $files = Invoke-Control 'storage.fs.list' @{
         storage_node_id=$StorageNodeId
         root=@{kind=$RootKind;id=$RootID}
