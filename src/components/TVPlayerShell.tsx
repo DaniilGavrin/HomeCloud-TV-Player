@@ -14,12 +14,14 @@
  * after Media Gateway provides an actual source URL/decoder.
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import type { MediaInspection } from '../lib/mediaStream';
 import '../styles/tv-player-shell.css';
 
 export interface TVPlayerShellProps {
   title: string;
   /** Derived from trusted Gateway content type; audio and video share controls. */
   mediaKind?: 'audio' | 'video';
+  inspection?: MediaInspection;
   /** Only supply a previously-authorized Gateway media URL; never from arbitrary TV commands. */
   sourceUrl?: string;
   roomId?: string;
@@ -54,7 +56,7 @@ function normalizedKey(event: KeyboardEvent): string {
   return event.key;
 }
 
-export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, roomId, playbackId, generation, testMode = false, onClose }: TVPlayerShellProps) {
+export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUrl, roomId, playbackId, generation, testMode = false, onClose }: TVPlayerShellProps) {
   const rootRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const backwardRef = useRef<HTMLButtonElement>(null);
@@ -273,6 +275,13 @@ export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, roomId, p
           <div className="hc-tv-player__heading">
             <span className="hc-tv-player__title" title={title}>{title}</span>
             {testMode && <span className="hc-tv-player__mode">TEST</span>}
+            {inspection?.status === 'READY' && inspection.media && (
+              <span className="hc-tv-player__mode" title="Метаданные источника (ffprobe)">
+                {inspection.media.container.toUpperCase()}
+                {' · '}{inspection.media.tracks.find(t => t.kind === 'video')?.codec?.toUpperCase() ??
+                  inspection.media.tracks.find(t => t.kind === 'audio')?.codec?.toUpperCase() ?? ''}
+              </span>
+            )}
           </div>
 
           <div className="hc-tv-player__timeline-row">
@@ -336,6 +345,21 @@ export function TVPlayerShell({ title, mediaKind = 'video', sourceUrl, roomId, p
             </div>
             <span className="hc-tv-player__watermark">HomeCloud TV</span>
           </div>
+          {inspection?.status === 'READY' && (
+            <div className="hc-tv-player__inspection" aria-label="Медиаинспекция">
+              <span>Режим (оценка): {inspection.decision?.mode ?? 'UNKNOWN'}
+                {' · '}{inspection.decision?.reason ?? 'Не определён'}</span>
+              {inspection.media?.tracks.some(t => t.kind === 'audio') && (
+                <span>
+                  Аудиодорожки: {inspection.media.tracks.filter(t => t.kind === 'audio')
+                    .slice(0, 4).map(t =>
+                      `#${t.index} ${t.codec.toUpperCase()} ${t.language ?? ''}` +
+                      (t.index === inspection.decision?.audio_stream_index ? ' (предпочт.)' : '')
+                    ).join(' · ')}
+                </span>
+              )}
+            </div>
+          )}
           {(notice || !hasMedia) && (
             <div className="hc-tv-player__notice" role="status">
               {notice || 'Ожидание медиаисточника'}
