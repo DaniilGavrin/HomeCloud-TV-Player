@@ -136,6 +136,9 @@ export default function App() {
             key={`${roomView.room_id}:${roomView.playback_id}:${roomView.generation}`}
             title="HomeCloud Media"
             sourceUrl={streamView.url}
+            roomId={roomView.room_id}
+            playbackId={roomView.playback_id}
+            generation={roomView.generation}
             mediaKind={streamView.kind ?? 'video'}
             onClose={() => {
               void send('media.rooms.stop', {
