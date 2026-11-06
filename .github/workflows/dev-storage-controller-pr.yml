@@ -1,0 +1,36 @@
+name: PowerShell dev storage controller checks
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/Dev-Play-Storage.ps1'
+      - '.github/workflows/dev-storage-controller-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify PowerShell syntax and RoomId parameter
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './scripts/Dev-Play-Storage.ps1').Path,
+            [ref]$tokens,
+            [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.ToString() }
+            exit 1
+          }
+          $paramNames = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+          if ($paramNames -notcontains 'RoomId') {
+            throw 'Missing optional RoomId parameter'
+          }
+          Write-Host 'PowerShell parser OK; RoomId parameter is available.'
