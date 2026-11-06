@@ -5,8 +5,9 @@ import { attachRoomStream, getStreamState, resetStream } from '../src/lib/mediaS
 
 class MockWebSocket {
   static instances = [];
-  constructor(url) { this.url = url; this.closed = false; this.sent = []; MockWebSocket.instances.push(this); }
-  close() { this.closed = true; }
+  static OPEN = 1;
+  constructor(url) { this.url = url; this.closed = false; this.readyState = 1; this.sent = []; MockWebSocket.instances.push(this); }
+  close() { this.closed = true; this.readyState = 3; }
   send(data) { this.sent.push(data); }
 }
 globalThis.WebSocket = MockWebSocket;
@@ -59,4 +60,29 @@ test('untrusted TV identity cannot attach', () => {
   resetStream();
   assert.equal(attachRoomStream(offer(1, 'mp3', 'a'.repeat(64)), 'another-tv'), false);
   assert.equal(getStreamState(), null);
+});
+
+test('KAN-55 opted-in HTTP switch reuses one direct Gateway websocket', () => {
+  resetStream();
+  MockWebSocket.instances.length = 0;
+  assert.equal(attachRoomStream(offer(1, 'mp3', 'a'.repeat(64)), 'tv-1'), true);
+  const control = MockWebSocket.instances[0];
+  control.onopen();
+  const firstHello = JSON.parse(control.sent[0]);
+  assert.equal(firstHello.capabilities.http_switch, true);
+  control.onmessage({data:JSON.stringify({...ready('mp3',1), http_switch:true})});
+  assert.equal(getStreamState().phase, 'ready');
+
+  assert.equal(attachRoomStream(offer(2, 'mkv', 'b'.repeat(64)), 'tv-1'), true);
+  assert.equal(control.closed, false);
+  assert.equal(MockWebSocket.instances.length, 1, 'unexpected WS reconnect');
+  const secondHello = JSON.parse(control.sent[1]);
+  assert.equal(secondHello.generation, 2);
+  assert.equal(secondHello.playback_id, 'mkv');
+  control.onmessage({data:JSON.stringify({...ready('mp3',1), http_switch:true})});
+  assert.equal(getStreamState().phase, 'connecting', 'stale ready rewrote new stream');
+  control.onmessage({data:JSON.stringify({...ready('mkv',2), http_switch:true})});
+  assert.equal(getStreamState().phase, 'ready');
+  assert.equal(getStreamState().playback_id, 'mkv');
+  resetStream();
 });
