@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { matchesPlaybackIdentity } from '../src/lib/playbackIdentity.ts';
 import { attachRoomStream, getStreamState, resetStream } from '../src/lib/mediaStream.ts';
 import { detectDecoderCapabilities } from '../src/lib/mediaCapabilities.ts';
+import { inspectExactDecoder } from '../src/lib/exactDecoder.ts';
 
 class MockWebSocket {
   static instances = [];
@@ -125,4 +126,39 @@ test('KAN-61 stale inspection cannot overwrite a different playback generation',
   assert.equal(getStreamState().playback_id, 'mkv');
   assert.equal(getStreamState().inspection, undefined);
   resetStream();
+});
+
+test('KAN-61 exact MediaCapabilities honors H264 High profile and frame size', async () => {
+  const inspected = {status:'READY',media:{container:'mp4',bit_rate:4500000,tracks:[
+    {index:0,kind:'video',codec:'h264',profile:'High',level:40,
+      width:1920,height:1080,frame_rate:'30/1',bit_rate:4000000},
+    {index:1,kind:'audio',codec:'aac',channels:2,sample_rate:48000,
+      bit_rate:160000,default:true},
+  ]},decision:{mode:'UNKNOWN',reason:'LIMITS_UNCONFIRMED',audio_stream_index:1}};
+  let calls = 0;
+  const caps = await inspectExactDecoder(inspected, async config => {
+    calls += 1;
+    assert.equal(config.video.contentType, 'video/mp4; codecs="avc1.640028"');
+    assert.equal(config.video.width, 1920);
+    assert.equal(config.audio.contentType, 'audio/mp4; codecs="mp4a.40.2"');
+    return {supported:true,smooth:true,powerEfficient:false};
+  });
+  assert.equal(calls, 1);
+  assert.equal(caps.source, 'media_capabilities_api');
+  assert.equal(caps.formats[0].certainty,'probably');
+  assert.equal(caps.formats[0].max_width,1920);
+  assert.equal(caps.formats[0].max_level,40);
+  const nope = await inspectExactDecoder(inspected, async () =>
+    ({supported:false,smooth:false,powerEfficient:false}));
+  assert.equal(nope.formats[0].certainty,'unsupported');
+});
+
+test('KAN-61 uncertain or missing decoder measurements stay UNKNOWN', async () => {
+  const info = {status:'READY',media:{container:'matroska',tracks:[
+    {index:0,kind:'video',codec:'hevc',profile:'Main 10',level:120,
+      width:3840,height:2160}, // no verified bitrate/framerate
+  ]}};
+  assert.equal(await inspectExactDecoder(info,async () =>
+    ({supported:true,smooth:true,powerEfficient:true})), null);
+  assert.equal(await inspectExactDecoder(info), null);
 });
