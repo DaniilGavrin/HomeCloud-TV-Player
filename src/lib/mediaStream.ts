@@ -4,6 +4,19 @@
  * WebView's native audio/video decoder. Never accept media URLs from panels.
  */
 import type { RoomLifecycle } from './roomLifecycle';
+import { currentDecoderCapabilities } from './mediaCapabilities';
+
+export type MediaTrack = {
+  index: number; kind: string; codec: string; profile?: string; level?: number;
+  width?: number; height?: number; channels?: number; language?: string;
+  default?: boolean;
+};
+export type MediaInspection = {
+  status: string;
+  media?: { container: string; duration_ms?: number; tracks: MediaTrack[] };
+  decision?: { mode: string; reason: string; audio_stream_index?: number };
+  error_code?: string;
+};
 
 export type StreamState = {
   room_id: string;
@@ -13,6 +26,7 @@ export type StreamState = {
   url?: string;
   kind?: 'audio' | 'video';
   detail?: string;
+  inspection?: MediaInspection;
 };
 
 const listeners = new Set<() => void>();
@@ -118,7 +132,8 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
       room_id:roomId, playback_id:playbackId,
       generation, device_id:ownDeviceId,
       attach_ticket:o.attach_ticket,
-      capabilities:{ http_range:true, http_switch:true },
+      capabilities:{ http_range:true, http_switch:true,
+        decoder:currentDecoderCapabilities() },
     }));
   };
   ws.onopen = sendHello;
@@ -129,6 +144,21 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
     if (!payload) return;
     if (payload.type === 'media.error') {
       current = {room_id:roomId,playback_id:playbackId,generation,phase:'error',detail:'Gateway отклонил подключение'};
+      emit();
+      return;
+    }
+    if (payload.type === 'media.inspection') {
+      if (payload.room_id !== roomId || payload.playback_id !== playbackId ||
+          payload.generation !== generation || !current || current.phase !== 'ready') return;
+      const report = record(payload.report);
+      const media = record(report?.media);
+      const decision = record(report?.decision);
+      const tracks = Array.isArray(media?.tracks) ? media.tracks : [];
+      // Never trust unexpected output sizes/fields from a remote socket.
+      if (!report || typeof report.status !== 'string' || tracks.length > 32 ||
+          (media && (typeof media.container !== 'string' || media.container.length > 64)) ||
+          (decision && (typeof decision.mode !== 'string' || typeof decision.reason !== 'string'))) return;
+      current = { ...current, inspection:report as MediaInspection };
       emit();
       return;
     }
