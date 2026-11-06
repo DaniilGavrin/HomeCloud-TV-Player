@@ -38,3 +38,30 @@ The controller deliberately does **not** auto-select an occupied room. A user mu
 - [ ] Full STOP closes the room; next PLAY without `room_id` opens a new one.
 
 The first physical MP3-to-MKV test was reported successful on 2026-11-05, but it was not a complete automated acceptance suite. Protocol ownership: HomeCloudBackend `internal/mediarooms/manager.go`; related Jira issue: KAN-55.
+
+## Explicit room inspection and STOP (KAN-55 acceptance)
+
+Use the same `-Backend` and `-StorageNodeId` options as above:
+
+```powershell
+.\scripts\Dev-Play-Storage.ps1 `
+  -Backend 'ws://192.168.0.147:8080/ws' `
+  -StorageNodeId '<storage-node-id>' `
+  -ListRooms
+```
+
+The response prints authoritative active `room_id`, `playback_id`,
+`generation`, `room_state` and `playback_state` before accessing the file
+catalog. To close one room explicitly:
+
+```powershell
+.\scripts\Dev-Play-Storage.ps1 `
+  -Backend 'ws://192.168.0.147:8080/ws' `
+  -StorageNodeId '<storage-node-id>' `
+  -RoomId '<existing-room-id>' `
+  -Stop
+```
+
+STOP never reuses the old room ID. To create a room after STOP, run PLAY
+without `-RoomId`. The script deliberately does not select an occupied room
+automatically or STOP implicitly when PLAY returns `ROOM_CONFLICT`.
