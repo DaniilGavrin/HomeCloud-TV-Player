@@ -140,6 +140,7 @@ export default function App() {
             playbackId={roomView.playback_id}
             generation={roomView.generation}
             mediaKind={streamView.kind ?? 'video'}
+            inspection={streamView.inspection}
             onClose={() => {
               void send('media.rooms.stop', {
                 room_id:roomView.room_id,command_id:`tv-stop-${createUUID()}`,
