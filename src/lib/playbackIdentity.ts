@@ -6,7 +6,7 @@ export type PlaybackIdentity = {
 };
 
 export function matchesPlaybackIdentity(
-  dataset: Pick<DOMStringMap, 'roomId' | 'playbackId' | 'generation'>,
+  dataset: DOMStringMap,
   current: PlaybackIdentity,
 ): boolean {
   return dataset.roomId === current.room_id &&
