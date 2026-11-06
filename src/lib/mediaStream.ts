@@ -90,6 +90,11 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
   const playbackId = o.playback_id;
   const generation = o.generation as number;
   const key = `${roomId}/${playbackId}/${generation}/${o.attach_ticket}`;
+  // WS offers can arrive out of order relative to room snapshots and retries.
+  // Do not tear down a newer playback when a previous offer arrives late.
+  if (current?.room_id === roomId &&
+      (generation < current.generation ||
+       (generation === current.generation && playbackId !== current.playback_id))) return false;
   if (attachmentKey === key && activeSocket) return true;
   closeActive();
   attachmentKey = key;
