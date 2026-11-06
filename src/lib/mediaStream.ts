@@ -137,7 +137,7 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
       room_id:roomId, playback_id:playbackId,
       generation, device_id:ownDeviceId,
       attach_ticket:o.attach_ticket,
-      capabilities:{ http_range:true, http_switch:true,
+      capabilities:{ http_range:true, http_switch:true, media_inspection:true,
         decoder:currentDecoderCapabilities() },
     }));
   };
