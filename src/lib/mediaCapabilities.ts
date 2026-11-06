@@ -16,7 +16,7 @@ export type FormatSupport = {
 
 export type DecoderCapabilities = {
   version: 1;
-  source: 'webview_can_play_type' | 'unavailable';
+  source: 'webview_can_play_type' | 'media_capabilities_api' | 'unavailable';
   formats: FormatSupport[];
   preferred_audio_language?: string;
   requested_audio_index?: number;
