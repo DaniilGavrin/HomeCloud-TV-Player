@@ -30,7 +30,9 @@ jobs:
             exit 1
           }
           $paramNames = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-          if ($paramNames -notcontains 'RoomId') {
-            throw 'Missing optional RoomId parameter'
+          foreach ($required in @('RoomId', 'ListRooms', 'Stop')) {
+            if ($paramNames -notcontains $required) {
+              throw "Missing controller parameter: $required"
+            }
           }
-          Write-Host 'PowerShell parser OK; RoomId parameter is available.'
+          Write-Host 'PowerShell parser OK; switch/list/stop parameters are available.'
