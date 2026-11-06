@@ -8,9 +8,11 @@ import type { DecoderCapabilities } from './mediaCapabilities';
 function avcCodec(t: MediaTrack): string | null {
   if (t.codec !== 'h264' || !t.level || t.level < 10 || t.level > 62) return null;
   const p = t.profile?.toLowerCase() ?? '';
-  const profile = p.includes('high') ? '6400' :
-    p.includes('main') ? '4d40' :
-    p.includes('baseline') ? '42e0' : '';
+  // Never treat High 10/High 4:2:2 as ordinary 8-bit High.
+  const profile = p === 'high' ? '6400' :
+    p === 'main' ? '4d40' :
+    p === 'constrained baseline' ? '42e0' :
+    p === 'baseline' ? '4200' : '';
   if (!profile) return null;
   return 'avc1.' + profile + t.level.toString(16).padStart(2, '0').toUpperCase();
 }
@@ -25,8 +27,7 @@ function videoMime(container: string, t: MediaTrack): string | null {
   const mime: Record<string, string> = {
     mp4: 'video/mp4', webm: 'video/webm', matroska: 'video/x-matroska',
   };
-  const codec = avcCodec(t) ?? hevcCodec(t) ??
-    (t.codec === 'vp9' ? 'vp09.00.51.08' : null);
+  const codec = avcCodec(t) ?? hevcCodec(t);
   if (!mime[container] || !codec) return null;
   return `${mime[container]}; codecs="${codec}"`;
 }
