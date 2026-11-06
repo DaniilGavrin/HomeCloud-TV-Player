@@ -19,6 +19,7 @@ const listeners = new Set<() => void>();
 let current: StreamState | null = null;
 let activeSocket: WebSocket | null = null;
 let attachmentKey = '';
+let supportsHTTPRebind = false;
 
 export const getStreamState = (): StreamState | null => current;
 export function subscribeStreamState(fn: () => void): () => void {
@@ -50,6 +51,7 @@ function validPrivateGateway(raw: string): URL | null {
   }
 }
 function closeActive(): void {
+  supportsHTTPRebind = false;
   const ws = activeSocket;
   activeSocket = null;
   if (ws) {
@@ -96,23 +98,30 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
       (generation < current.generation ||
        (generation === current.generation && playbackId !== current.playback_id))) return false;
   if (attachmentKey === key && activeSocket) return true;
-  closeActive();
+  // An opted-in Gateway permits switching media generations on the existing
+  // control socket. A fallback to legacy reconnect remains for older servers.
+  const reuseSocket = supportsHTTPRebind && activeSocket !== null &&
+    activeSocket.readyState === WebSocket.OPEN && activeSocket.url === endpoint.href &&
+    current?.room_id === roomId && current.phase === 'ready' &&
+    generation > current.generation;
+  if (!reuseSocket) closeActive();
   attachmentKey = key;
   current = { room_id: roomId, playback_id: playbackId, generation, phase:'connecting' };
   emit();
 
-  const ws = new WebSocket(endpoint.href);
+  const ws = reuseSocket ? activeSocket! : new WebSocket(endpoint.href);
   activeSocket = ws;
-  ws.onopen = () => {
+  const sendHello = () => {
     if (activeSocket !== ws) return;
     ws.send(JSON.stringify({
       v:1, type:'media.hello',
       room_id:roomId, playback_id:playbackId,
       generation, device_id:ownDeviceId,
       attach_ticket:o.attach_ticket,
-      capabilities:{ http_range:true },
+      capabilities:{ http_range:true, http_switch:true },
     }));
   };
+  ws.onopen = sendHello;
   ws.onmessage = event => {
     if (activeSocket !== ws || typeof event.data !== 'string') return;
     let payload: Record<string, unknown> | null = null;
@@ -139,6 +148,7 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
     source.pathname = path;
     source.search = '';
     source.hash = '';
+    supportsHTTPRebind = payload.http_switch === true;
     current = {room_id:roomId,playback_id:playbackId,generation,phase:'ready',
       url:source.href,kind};
     emit();
@@ -152,9 +162,11 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
   ws.onclose = () => {
     if (activeSocket !== ws) return;
     activeSocket = null;
+    supportsHTTPRebind = false;
     current = {room_id:roomId,playback_id:playbackId,generation,phase:'error',
       detail:'Прямое соединение с Media Gateway закрыто'};
     emit();
   };
+  if (reuseSocket) sendHello();
   return true;
 }
