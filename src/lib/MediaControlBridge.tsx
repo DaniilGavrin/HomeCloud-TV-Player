@@ -5,10 +5,16 @@ import { createUUID } from './uuid';
 import { acknowledge, applyToPlayer, canExecute, isSameRoom, parseRoom, player, send, type Control, type Room, type WSMessage } from './mediaControls';
 import { publishRoomLifecycle, reconcileRoomLifecycle, closeRoomLifecycle, resetRoomLifecycle } from './roomLifecycle';
 import { attachRoomStream, getStreamState, resetStream, sameStream, subscribeStreamState } from './mediaStream';
+import { matchesPlaybackIdentity } from './playbackIdentity';
 
-function isRealMediaEvent(event: Event): boolean {
-  return event.target instanceof HTMLVideoElement &&
-    event.target.matches('video[data-homecloud-media]');
+/** Late events from a previously unmounted decoder must never be reported as
+ * state for a replacement playback in the same room. */
+function activeMediaElement(event: Event, room: Room | null): HTMLVideoElement | null {
+  const target = event.target;
+  return room && target instanceof HTMLVideoElement &&
+    target.matches('video[data-homecloud-media]') &&
+    target === player() && matchesPlaybackIdentity(target.dataset, room)
+    ? target : null;
 }
 
 function obj(value: unknown): Record<string, unknown> | null {
@@ -75,10 +81,10 @@ export function MediaControlBridge() {
         }).catch(console.error);
       }
     };
-    const notifyObserved = async (state: string) => {
+    const notifyObserved = async (state: string, video: HTMLVideoElement) => {
       const current = room;
-      const video = player();
-      if (!current || !canExecute(video) || current.attach_epoch <= 0) return;
+      if (!current || video !== player() || !matchesPlaybackIdentity(video.dataset, current) ||
+          !canExecute(video) || current.attach_epoch <= 0) return;
       reportSequence += 1;
       await send('media.room.report', {
         room_id: current.room_id, playback_id: current.playback_id,
@@ -131,6 +137,10 @@ export function MediaControlBridge() {
         // offer means the TV accepted room metadata, never that media is playing.
         const data = obj(message.data);
         if (data && obj(data.target)?.device_id === getDeviceId()) {
+          // Reject delayed offers from an older generation (or another room).
+          if (room && (data.room_id !== room.room_id ||
+              (typeof data.generation === 'number' && data.generation < room.generation) ||
+              (data.generation === room.generation && data.playback_id !== room.playback_id))) return;
           ticketRequestKey = `${data.room_id}/${data.playback_id}/${data.generation}`;
           attachRoomStream(data, getDeviceId());
           await send('media.room.participant', {
@@ -209,16 +219,24 @@ export function MediaControlBridge() {
     // AFTER the room offer, so listeners attached to player() at bridge mount
     // would silently miss PLAYING/PAUSED reports. Never report the demo player.
     const onPlay = (ev: Event) => {
-      if (isRealMediaEvent(ev)) void notifyObserved('PLAYING').catch(console.error);
+      const video = activeMediaElement(ev, room);
+      if (video && video.dataset.homecloudFinished !== 'true') {
+        void notifyObserved('PLAYING', video).catch(console.error);
+      }
     };
     const onPause = (ev: Event) => {
-      if (isRealMediaEvent(ev)) void notifyObserved('PAUSED').catch(console.error);
+      const video = activeMediaElement(ev, room);
+      if (video && video.dataset.homecloudFinished !== 'true') {
+        void notifyObserved('PAUSED', video).catch(console.error);
+      }
     };
     const onEnded = (ev: Event) => {
-      const target = ev.target;
-      if (!(target instanceof HTMLVideoElement) || !target.matches('video[data-homecloud-media]') || !room) return;
+      const target = activeMediaElement(ev, room);
+      if (!target || target.dataset.homecloudFinished === 'true') return;
+      // Prevent teardown-triggered pause events from arriving after ENDED.
+      target.dataset.homecloudFinished = 'true';
       void (async () => {
-        try { await notifyObserved('ENDED'); }
+        try { await notifyObserved('ENDED', target); }
         catch (e) { console.error('Unable to publish true decoder EOF', e); }
         finally {
           // Release the old decoder buffer, not the room or control WS.
