@@ -4,7 +4,7 @@
  * WebView's native audio/video decoder. Never accept media URLs from panels.
  */
 import type { RoomLifecycle } from './roomLifecycle';
-import { currentDecoderCapabilities } from './mediaCapabilities';
+import { currentDecoderCapabilities } from './mediaCapabilities.ts';
 
 export type MediaTrack = {
   index: number; kind: string; codec: string; profile?: string; level?: number;
