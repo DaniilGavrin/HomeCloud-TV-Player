@@ -208,3 +208,14 @@
 .hc-tv-player__video--audio {
   opacity: 0;
 }
+
+/* KAN-61: metadata shown only with the transport HUD, no continuous effects. */
+.hc-tv-player__inspection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.72rem;
+  opacity: 0.82;
+  max-width: 100%;
+  overflow: hidden;
+}

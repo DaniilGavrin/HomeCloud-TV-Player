@@ -4,6 +4,21 @@
  * WebView's native audio/video decoder. Never accept media URLs from panels.
  */
 import type { RoomLifecycle } from './roomLifecycle';
+import { currentDecoderCapabilities } from './mediaCapabilities.ts';
+import { currentExactDecoder } from './exactDecoder.ts';
+
+export type MediaTrack = {
+  index: number; kind: string; codec: string; profile?: string; level?: number;
+  width?: number; height?: number; channels?: number; language?: string;
+  bit_rate?: number; sample_rate?: number; frame_rate?: string;
+  default?: boolean;
+};
+export type MediaInspection = {
+  status: string;
+  media?: { container: string; duration_ms?: number; bit_rate?: number; tracks: MediaTrack[] };
+  decision?: { mode: string; reason: string; audio_stream_index?: number };
+  error_code?: string;
+};
 
 export type StreamState = {
   room_id: string;
@@ -13,6 +28,7 @@ export type StreamState = {
   url?: string;
   kind?: 'audio' | 'video';
   detail?: string;
+  inspection?: MediaInspection;
 };
 
 const listeners = new Set<() => void>();
@@ -20,6 +36,7 @@ let current: StreamState | null = null;
 let activeSocket: WebSocket | null = null;
 let attachmentKey = '';
 let supportsHTTPRebind = false;
+let exactCheckKey = '';
 
 export const getStreamState = (): StreamState | null => current;
 export function subscribeStreamState(fn: () => void): () => void {
@@ -52,6 +69,7 @@ function validPrivateGateway(raw: string): URL | null {
 }
 function closeActive(): void {
   supportsHTTPRebind = false;
+  exactCheckKey = '';
   const ws = activeSocket;
   activeSocket = null;
   if (ws) {
@@ -106,6 +124,7 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
     generation > current.generation;
   if (!reuseSocket) closeActive();
   attachmentKey = key;
+  exactCheckKey = '';
   current = { room_id: roomId, playback_id: playbackId, generation, phase:'connecting' };
   emit();
 
@@ -118,7 +137,8 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
       room_id:roomId, playback_id:playbackId,
       generation, device_id:ownDeviceId,
       attach_ticket:o.attach_ticket,
-      capabilities:{ http_range:true, http_switch:true },
+      capabilities:{ http_range:true, http_switch:true, media_inspection:true,
+        decoder:currentDecoderCapabilities() },
     }));
   };
   ws.onopen = sendHello;
@@ -130,6 +150,36 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
     if (payload.type === 'media.error') {
       current = {room_id:roomId,playback_id:playbackId,generation,phase:'error',detail:'Gateway отклонил подключение'};
       emit();
+      return;
+    }
+    if (payload.type === 'media.inspection') {
+      if (payload.room_id !== roomId || payload.playback_id !== playbackId ||
+          payload.generation !== generation || !current || current.phase !== 'ready') return;
+      const report = record(payload.report);
+      const media = record(report?.media);
+      const decision = record(report?.decision);
+      const tracks = Array.isArray(media?.tracks) ? media.tracks : [];
+      // Never trust unexpected output sizes/fields from a remote socket.
+      if (!report || typeof report.status !== 'string' || tracks.length > 32 ||
+          (media && (typeof media.container !== 'string' || media.container.length > 64)) ||
+          (decision && (typeof decision.mode !== 'string' || typeof decision.reason !== 'string'))) return;
+      current = { ...current, inspection:report as MediaInspection };
+      emit();
+      // Only the Gateway's authorized room socket can receive this report.
+      // An exact decoder query refines metadata AFTER ready, not media bytes.
+      const requestKey = `${roomId}/${playbackId}/${generation}`;
+      if (supportsHTTPRebind && report.status === 'READY' &&
+          exactCheckKey !== requestKey) {
+        exactCheckKey = requestKey;
+        void currentExactDecoder(report as MediaInspection).then(decoder => {
+          if (!decoder || !decoder.formats.length ||
+              activeSocket !== ws || attachmentKey !== key) return;
+          ws.send(JSON.stringify({
+            v:1, type:'media.decoder.report', room_id:roomId, playback_id:playbackId,
+            generation, device_id:ownDeviceId, capabilities:{decoder},
+          }));
+        }).catch(() => { /* decoder API unavailable: keep UNKNOWN */ });
+      }
       return;
     }
     if (payload.type !== 'media.ready' || payload.room_id !== roomId ||
