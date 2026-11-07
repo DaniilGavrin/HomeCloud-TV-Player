@@ -95,16 +95,37 @@ export function resetStream(): void {
 /** Select an inspected audio track on the already authorized Gateway socket.
  * Never construct FFmpeg arguments or media URLs inside the TV app.
  */
-export function selectAudioTrack(index: number): boolean {
+/** A converted MP4 must be checked separately from the original MKV/DTS.
+ * Prefer MediaCapabilities for the specific video/target AAC combination.
+ * Without an exact positive decoder report, do not start FFmpeg.
+ */
+export async function selectAudioTrack(index: number): Promise<boolean> {
   if (!Number.isSafeInteger(index) || index < 0 || index > 255 ||
       !current || current.phase !== 'ready' || !current.audioSelectionAvailable ||
       !activeSocket || activeSocket.readyState !== WebSocket.OPEN ||
       !activeDeviceId || !current.inspection?.media?.tracks.some(track =>
         track.kind === 'audio' && track.index === index)) return false;
-  activeSocket.send(JSON.stringify({
-    v:1, type:'media.audio.select',
-    room_id:current.room_id, playback_id:current.playback_id,
-    generation:current.generation, device_id:activeDeviceId, audio_index:index,
+  const inspection = current.inspection;
+  const media = inspection.media!;
+  const selected = media.tracks.find(t => t.kind === 'audio' && t.index === index)!;
+  const video = media.tracks.find(t => t.kind === 'video');
+  const candidate: MediaInspection = {status:'READY',media:{
+    container:'mp4',duration_ms:media.duration_ms,bit_rate:media.bit_rate,
+    tracks:[...(video ? [video] : []),{
+      ...selected,codec:'aac',bit_rate:160000,sample_rate:48000,channels:2,
+    }],
+  },decision:{mode:'DIRECT',reason:'OUTPUT_CAPABILITY_PROBE',audio_stream_index:index}};
+  const ws = activeSocket;
+  const roomId = current.room_id, playbackId = current.playback_id, generation = current.generation;
+  const output = await currentExactDecoder(candidate);
+  if (!output || !output.formats.some(f => f.container === 'mp4' && f.certainty === 'probably' &&
+      f.audio_codec === 'aac') || activeSocket !== ws || !current ||
+      current.room_id !== roomId || current.playback_id !== playbackId ||
+      current.generation !== generation || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify({
+    v:1,type:'media.audio.select',room_id:roomId,playback_id:playbackId,
+    generation,device_id:activeDeviceId,audio_index:index,
+    capabilities:{decoder:output},
   }));
   return true;
 }
