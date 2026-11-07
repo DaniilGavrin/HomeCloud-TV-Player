@@ -9,7 +9,7 @@ import { ConnectingScreen } from './features/onboarding/ConnectingScreen';
 import { ConnectedScreen } from './features/onboarding/ConnectedScreen';
 import { RoomPlaceholder } from './lib/RoomPlaceholder';
 import { TVPlayerShell } from './components/TVPlayerShell';
-import { getStreamState, sameStream, subscribeStreamState } from './lib/mediaStream';
+import { getStreamState, sameStream, subscribeStreamState, selectAudioTrack } from './lib/mediaStream';
 import { send } from './lib/mediaControls';
 import { createUUID } from './lib/uuid';
 import { DevPlayerProbe } from './lib/DevPlayerProbe';
@@ -141,6 +141,11 @@ export default function App() {
             generation={roomView.generation}
             mediaKind={streamView.kind ?? 'video'}
             inspection={streamView.inspection}
+            audioSelectionAvailable={streamView.audioSelectionAvailable}
+            selectedAudioIndex={streamView.selectedAudioIndex}
+            seekSupported={streamView.seekSupported}
+            transportNotice={streamView.detail}
+            onSelectAudioTrack={selectAudioTrack}
             onClose={() => {
               void send('media.rooms.stop', {
                 room_id:roomView.room_id,command_id:`tv-stop-${createUUID()}`,

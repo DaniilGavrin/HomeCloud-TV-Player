@@ -219,3 +219,12 @@
   max-width: 100%;
   overflow: hidden;
 }
+
+/* KAN-63: lightweight D-pad friendly audio-track controls (no blur/animation). */
+.hc-tv-player__audio-tracks {display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hc-tv-player__audio-track {
+ color:inherit;background:rgba(26,54,91,.85);border:1px solid rgba(150,205,255,.45);
+ border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer;
+}
+.hc-tv-player__audio-track[aria-pressed="true"]{border-color:#89d2ff;}
+.hc-tv-player__audio-track:focus-visible {outline:2px solid #85caff;outline-offset:2px;}

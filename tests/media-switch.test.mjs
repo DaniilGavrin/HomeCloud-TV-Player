@@ -162,3 +162,16 @@ test('KAN-61 uncertain or missing decoder measurements stay UNKNOWN', async () =
     ({supported:true,smooth:true,powerEfficient:true})), null);
   assert.equal(await inspectExactDecoder(info), null);
 });
+
+test('KAN-63 uses the authorized direct media WS for explicit selected audio', () => {
+  const stream = read('src/lib/mediaStream.ts');
+  const shell = read('src/components/TVPlayerShell.tsx');
+  assert.match(stream, /media\.audio\.select/);
+  assert.match(stream, /media\.convert\.ready/);
+  assert.match(stream, /media\/convert/);
+  assert.match(stream, /seek_supported !== false/);
+  assert.match(shell, /onSelectAudioTrack/);
+  assert.match(shell, /audioSelectionAvailable/);
+  assert.match(shell, /data-hc-audio-track/);
+  assert.match(shell, /seekSupported/);
+});
