@@ -109,10 +109,16 @@ export async function selectAudioTrack(index: number): Promise<boolean> {
   const media = inspection.media!;
   const selected = media.tracks.find(t => t.kind === 'audio' && t.index === index)!;
   const video = media.tracks.find(t => t.kind === 'video');
+  // Match precisely the Gateway's selective AAC copy vs normalized
+  // AAC 48kHz/stereo output policy. Never claim support for the wrong stream.
+  const copyAAC = selected.codec === 'aac' && selected.sample_rate === 48000 &&
+    selected.channels === 2 && typeof selected.bit_rate === 'number' &&
+    selected.bit_rate > 0 && selected.bit_rate <= 192000;
   const candidate: MediaInspection = {status:'READY',media:{
     container:'mp4',duration_ms:media.duration_ms,bit_rate:media.bit_rate,
     tracks:[...(video ? [video] : []),{
-      ...selected,codec:'aac',bit_rate:160000,sample_rate:48000,channels:2,
+      ...selected,codec:'aac',bit_rate:copyAAC ? selected.bit_rate : 160000,
+      sample_rate:48000,channels:2,
     }],
   },decision:{mode:'DIRECT',reason:'OUTPUT_CAPABILITY_PROBE',audio_stream_index:index}};
   const ws = activeSocket;
