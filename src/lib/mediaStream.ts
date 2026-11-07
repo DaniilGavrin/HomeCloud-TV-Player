@@ -29,6 +29,10 @@ export type StreamState = {
   kind?: 'audio' | 'video';
   detail?: string;
   inspection?: MediaInspection;
+  audioSelectionAvailable?: boolean;
+  converted?: boolean;
+  selectedAudioIndex?: number;
+  seekSupported?: boolean;
 };
 
 const listeners = new Set<() => void>();
@@ -37,6 +41,7 @@ let activeSocket: WebSocket | null = null;
 let attachmentKey = '';
 let supportsHTTPRebind = false;
 let exactCheckKey = '';
+let activeDeviceId = '';
 
 export const getStreamState = (): StreamState | null => current;
 export function subscribeStreamState(fn: () => void): () => void {
@@ -70,6 +75,7 @@ function validPrivateGateway(raw: string): URL | null {
 function closeActive(): void {
   supportsHTTPRebind = false;
   exactCheckKey = '';
+  activeDeviceId = '';
   const ws = activeSocket;
   activeSocket = null;
   if (ws) {
@@ -86,6 +92,23 @@ export function resetStream(): void {
   current = null;
   emit();
 }
+/** Select an inspected audio track on the already authorized Gateway socket.
+ * Never construct FFmpeg arguments or media URLs inside the TV app.
+ */
+export function selectAudioTrack(index: number): boolean {
+  if (!Number.isSafeInteger(index) || index < 0 || index > 255 ||
+      !current || current.phase !== 'ready' || !current.audioSelectionAvailable ||
+      !activeSocket || activeSocket.readyState !== WebSocket.OPEN ||
+      !activeDeviceId || !current.inspection?.media?.tracks.some(track =>
+        track.kind === 'audio' && track.index === index)) return false;
+  activeSocket.send(JSON.stringify({
+    v:1, type:'media.audio.select',
+    room_id:current.room_id, playback_id:current.playback_id,
+    generation:current.generation, device_id:activeDeviceId, audio_index:index,
+  }));
+  return true;
+}
+
 export function sameStream(room: RoomLifecycle, state: StreamState | null): boolean {
   return state?.room_id === room.room_id &&
     state?.playback_id === room.playback_id &&
@@ -130,6 +153,7 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
 
   const ws = reuseSocket ? activeSocket! : new WebSocket(endpoint.href);
   activeSocket = ws;
+  activeDeviceId = ownDeviceId;
   const sendHello = () => {
     if (activeSocket !== ws) return;
     ws.send(JSON.stringify({
@@ -138,7 +162,7 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
       generation, device_id:ownDeviceId,
       attach_ticket:o.attach_ticket,
       capabilities:{ http_range:true, http_switch:true, media_inspection:true,
-        decoder:currentDecoderCapabilities() },
+        audio_selection:true, decoder:currentDecoderCapabilities() },
     }));
   };
   ws.onopen = sendHello;
@@ -149,6 +173,38 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
     if (!payload) return;
     if (payload.type === 'media.error') {
       current = {room_id:roomId,playback_id:playbackId,generation,phase:'error',detail:'Gateway отклонил подключение'};
+      emit();
+      return;
+    }
+    if (payload.type === 'media.convert.error') {
+      if (payload.room_id === roomId && payload.playback_id === playbackId &&
+          payload.generation === generation && current?.phase === 'ready') {
+        current = { ...current, detail:'Gateway не может выполнить преобразование выбранной дорожки' };
+        emit();
+      }
+      return;
+    }
+    if (payload.type === 'media.convert.ready') {
+      if (payload.room_id !== roomId || payload.playback_id !== playbackId ||
+          payload.generation !== generation || !current ||
+          current.phase !== 'ready' || !current.audioSelectionAvailable) return;
+      const convertedPath = payload.http_media_path;
+      const selected = payload.audio_index;
+      const mediaKind = payload.media_kind;
+      if (typeof convertedPath !== 'string' ||
+          !/^\/media\/convert\/[a-f0-9]{64}$/i.test(convertedPath) ||
+          !Number.isSafeInteger(selected) || typeof selected !== 'number' ||
+          !current.inspection?.media?.tracks.some(track =>
+            track.kind === 'audio' && track.index === selected) ||
+          (mediaKind !== 'audio' && mediaKind !== 'video') ||
+          payload.seek_supported !== false) return;
+      const src = new URL(endpoint.href);
+      src.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:';
+      src.pathname = convertedPath;
+      src.search = '';
+      src.hash = '';
+      current = { ...current, url:src.href, kind:mediaKind, converted:true,
+        selectedAudioIndex:selected, seekSupported:false, detail:undefined };
       emit();
       return;
     }
@@ -200,7 +256,8 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
     source.hash = '';
     supportsHTTPRebind = payload.http_switch === true;
     current = {room_id:roomId,playback_id:playbackId,generation,phase:'ready',
-      url:source.href,kind};
+      url:source.href,kind, seekSupported:true,
+      audioSelectionAvailable:payload.audio_selection === true};
     emit();
   };
   ws.onerror = () => {
