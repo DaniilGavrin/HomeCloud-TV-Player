@@ -22,6 +22,11 @@ export interface TVPlayerShellProps {
   /** Derived from trusted Gateway content type; audio and video share controls. */
   mediaKind?: 'audio' | 'video';
   inspection?: MediaInspection;
+  audioSelectionAvailable?: boolean;
+  selectedAudioIndex?: number;
+  seekSupported?: boolean;
+  transportNotice?: string;
+  onSelectAudioTrack?: (index:number)=>boolean;
   /** Only supply a previously-authorized Gateway media URL; never from arbitrary TV commands. */
   sourceUrl?: string;
   roomId?: string;
@@ -31,7 +36,7 @@ export interface TVPlayerShellProps {
   onClose: () => void;
 }
 
-type FocusSlot = 'backward' | 'play' | 'forward' | 'timeline';
+type FocusSlot = 'backward' | 'play' | 'forward' | 'timeline' | 'audio';
 const AUTO_HIDE_MS = 3500;
 const SEEK_STEP = 10;
 
@@ -56,7 +61,9 @@ function normalizedKey(event: KeyboardEvent): string {
   return event.key;
 }
 
-export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUrl, roomId, playbackId, generation, testMode = false, onClose }: TVPlayerShellProps) {
+export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUrl, roomId, playbackId,
+ generation, audioSelectionAvailable = false, selectedAudioIndex, seekSupported = true,
+ transportNotice, onSelectAudioTrack, testMode = false, onClose }: TVPlayerShellProps) {
   const rootRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const backwardRef = useRef<HTMLButtonElement>(null);
@@ -79,6 +86,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
     const controls: Record<FocusSlot, HTMLElement | null> = {
       backward: backwardRef.current, play: playRef.current,
       forward: forwardRef.current, timeline: timelineRef.current,
+      audio: rootRef.current?.querySelector<HTMLButtonElement>('[data-hc-audio-track]') ?? null,
     };
     controls[slot]?.focus({ preventScroll: true });
   }, []);
@@ -137,6 +145,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   }, [updateFromVideo]);
 
   const seekTo = useCallback((seconds: number) => {
+    if (!seekSupported) {setNotice('Перемотка преобразованного потока пока недоступна');return;}
     const video = videoRef.current;
     if (!video || video.readyState === HTMLMediaElement.HAVE_NOTHING ||
         !Number.isFinite(video.duration) || video.duration <= 0) {
@@ -152,7 +161,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
       console.error('Video seek failed', error);
       setNotice('Не удалось перемотать этот источник');
     }
-  }, []);
+  }, [seekSupported]);
 
   const seekBy = useCallback((seconds: number) => {
     const video = videoRef.current;
@@ -167,6 +176,8 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
       case 'timeline': break; // D-pad arrows move timeline, OK does not restart media.
     }
   }, [seekBy, togglePlay]);
+
+  useEffect(() => {setNotice('');},[sourceUrl]);
 
   useEffect(() => {
     show('play');
@@ -206,6 +217,19 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
       }
       keepOpen();
       const current = focusRef.current;
+      if (current === 'audio') {
+        const buttons = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[data-hc-audio-track]') ?? []);
+        const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        if ((key === 'ArrowLeft' || key === 'ArrowRight') && buttons.length > 0) {
+          const next = Math.max(0,Math.min(buttons.length-1,
+            (currentIndex<0 ? 0 : currentIndex)+(key==='ArrowLeft' ? -1 : 1)));
+          buttons[next]?.focus({preventScroll:true});
+        } else if (key === 'ArrowUp') focus('timeline');
+        else if (key === 'Enter' || key === ' ' || key === 'Spacebar')
+          (document.activeElement as HTMLButtonElement)?.click();
+        return;
+      }
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         if (current === 'timeline') {
           seekBy(key === 'ArrowLeft' ? -SEEK_STEP : SEEK_STEP);
@@ -216,7 +240,9 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
           focus(row[newIdx]);
         }
       } else if (key === 'ArrowDown') {
-        focus('timeline');
+        if (current==='timeline' && audioSelectionAvailable &&
+            rootRef.current?.querySelector('[data-hc-audio-track]')) focus('audio');
+        else focus('timeline');
       } else if (key === 'ArrowUp') {
         focus('play');
       } else {
@@ -228,7 +254,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
     return () => window.removeEventListener('keydown', onKey, true);
   }, [activate, focus, hide, keepOpen, onClose, seekBy, show, togglePlay]);
 
-  const canSeek = hasMedia && duration > 0 && Number.isFinite(duration);
+  const canSeek = seekSupported && hasMedia && duration > 0 && Number.isFinite(duration);
   const progress = canSeek ? Math.min(100, Math.max(0, position / duration * 100)) : 0;
   const loaded = canSeek ? Math.min(100, Math.max(0, buffered / duration * 100)) : 0;
   const timelineStyle = { '--hc-progress': `${progress}%`, '--hc-buffered': `${loaded}%` } as CSSProperties;
@@ -350,19 +376,32 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
               <span>Режим (оценка): {inspection.decision?.mode ?? 'UNKNOWN'}
                 {' · '}{inspection.decision?.reason ?? 'Не определён'}</span>
               {inspection.media?.tracks.some(t => t.kind === 'audio') && (
-                <span>
-                  Аудиодорожки: {inspection.media.tracks.filter(t => t.kind === 'audio')
-                    .slice(0, 4).map(t =>
-                      `#${t.index} ${t.codec.toUpperCase()} ${t.language ?? ''}` +
-                      (t.index === inspection.decision?.audio_stream_index ? ' (предпочт.)' : '')
-                    ).join(' · ')}
-                </span>
+                <div className="hc-tv-player__audio-tracks" aria-label="Аудиодорожки">
+                  {inspection.media.tracks.filter(t => t.kind === 'audio')
+                    .slice(0, 8).map(track => audioSelectionAvailable ? (
+                      <button key={track.index} type="button" data-hc-audio-track
+                        className="hc-tv-player__audio-track" tabIndex={visible ? 0 : -1}
+                        aria-pressed={selectedAudioIndex === track.index}
+                        onFocus={() => {focusRef.current='audio';keepOpen();}}
+                        onClick={() => {
+                          keepOpen();
+                          if (onSelectAudioTrack?.(track.index))
+                            setNotice('Переключение аудиодорожки…');
+                          else setNotice('Выбор дорожки сейчас недоступен');
+                        }}>
+                        #{track.index} {track.language || track.codec.toUpperCase()}
+                        {track.index === selectedAudioIndex ? ' ✓' : ''}
+                      </button>
+                    ) : <span key={track.index}>
+                      #{track.index} {track.codec.toUpperCase()} {track.language ?? ''}
+                    </span>)}
+                </div>
               )}
             </div>
           )}
-          {(notice || !hasMedia) && (
+          {(notice || transportNotice || !hasMedia) && (
             <div className="hc-tv-player__notice" role="status">
-              {notice || 'Ожидание медиаисточника'}
+              {notice || transportNotice || 'Ожидание медиаисточника'}
             </div>
           )}
         </div>
