@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+const read = path => readFileSync(new URL('../'+path,import.meta.url),'utf8');
 import { matchesPlaybackIdentity } from '../src/lib/playbackIdentity.ts';
 import { attachRoomStream, getStreamState, resetStream } from '../src/lib/mediaStream.ts';
 import { detectDecoderCapabilities } from '../src/lib/mediaCapabilities.ts';
