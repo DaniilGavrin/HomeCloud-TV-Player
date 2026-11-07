@@ -170,7 +170,7 @@ test('KAN-63 uses the authorized direct media WS for explicit selected audio', (
   const shell = read('src/components/TVPlayerShell.tsx');
   assert.match(stream, /media\.audio\.select/);
   assert.match(stream, /media\.convert\.ready/);
-  assert.match(stream, /media\/convert/);
+  assert.match(stream, /http_media_path/);
   assert.match(stream, /seek_supported !== false/);
   assert.match(shell, /onSelectAudioTrack/);
   assert.match(shell, /audioSelectionAvailable/);
