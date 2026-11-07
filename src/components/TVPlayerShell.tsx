@@ -26,7 +26,7 @@ export interface TVPlayerShellProps {
   selectedAudioIndex?: number;
   seekSupported?: boolean;
   transportNotice?: string;
-  onSelectAudioTrack?: (index:number)=>boolean;
+  onSelectAudioTrack?: (index:number)=>Promise<boolean>;
   /** Only supply a previously-authorized Gateway media URL; never from arbitrary TV commands. */
   sourceUrl?: string;
   roomId?: string;
@@ -385,9 +385,10 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
                         onFocus={() => {focusRef.current='audio';keepOpen();}}
                         onClick={() => {
                           keepOpen();
-                          if (onSelectAudioTrack?.(track.index))
-                            setNotice('Переключение аудиодорожки…');
-                          else setNotice('Выбор дорожки сейчас недоступен');
+                          void onSelectAudioTrack?.(track.index).then(ok => {
+                            setNotice(ok ? 'Переключение аудиодорожки…' :
+                              'TV не подтвердил совместимость преобразованного MP4/AAC');
+                          }).catch(() => setNotice('Не удалось проверить декодер TV'));
                         }}>
                         #{track.index} {track.language || track.codec.toUpperCase()}
                         {track.index === selectedAudioIndex ? ' ✓' : ''}
