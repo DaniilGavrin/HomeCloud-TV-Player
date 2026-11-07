@@ -177,3 +177,39 @@ test('KAN-63 uses the authorized direct media WS for explicit selected audio', (
   assert.match(shell, /data-hc-audio-track/);
   assert.match(shell, /seekSupported/);
 });
+
+
+test('KAN-63 converted media URL is bound to inspected track and current generation',()=>{
+ resetStream();
+ MockWebSocket.instances.length=0;
+ assert.equal(attachRoomStream(offer(1,'movie','a'.repeat(64)),'tv-1'),true);
+ const ws=MockWebSocket.instances[0];ws.onopen();
+ ws.onmessage({data:JSON.stringify({...ready('movie',1),http_switch:true,audio_selection:true})});
+ const direct=getStreamState().url;
+ ws.onmessage({data:JSON.stringify({
+  type:'media.inspection',room_id:'room-test',playback_id:'movie',generation:1,
+  report:{status:'READY',media:{container:'matroska',tracks:[
+   {index:0,kind:'video',codec:'h264'},
+   {index:2,kind:'audio',codec:'ac3',language:'rus'},
+  ]},decision:{mode:'ADAPTIVE',reason:'DECLARED_FORMAT_UNSUPPORTED'}},
+ })});
+ const readyConvert={
+  type:'media.convert.ready',room_id:'room-test',playback_id:'movie',generation:1,
+  http_media_path:'/media/convert/'+'b'.repeat(64),media_kind:'video',
+  audio_index:2,seek_supported:false,
+ };
+ ws.onmessage({data:JSON.stringify({...readyConvert,http_media_path:'/media/evil'})});
+ assert.equal(getStreamState().url,direct,'untrusted URL replaced Direct Play');
+ ws.onmessage({data:JSON.stringify({...readyConvert,audio_index:77})});
+ assert.equal(getStreamState().url,direct,'unknown track replaced Direct Play');
+ ws.onmessage({data:JSON.stringify(readyConvert)});
+ assert.match(getStreamState().url,/\/media\/convert\/b{64}$/);
+ assert.equal(getStreamState().selectedAudioIndex,2);
+ assert.equal(getStreamState().seekSupported,false);
+ assert.equal(getStreamState().converted,true);
+ assert.equal(attachRoomStream(offer(2,'next','c'.repeat(64)),'tv-1'),true);
+ ws.onmessage({data:JSON.stringify(readyConvert)});
+ assert.equal(getStreamState().playback_id,'next');
+ assert.equal(getStreamState().converted,undefined);
+ resetStream();
+});
