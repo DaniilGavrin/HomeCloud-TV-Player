@@ -289,7 +289,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run tauri -- build --bundles nsis,msi --config src-tauri/tauri.desktop.conf.json
+          for attempt in 1 2 3 4 5; do
+            if npm run tauri -- build --bundles nsis,msi --config src-tauri/tauri.desktop.conf.json; then
+              echo "Both Windows installers built on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Windows NSIS/MSI build failed after five attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt*15))
+          done
       - name: Compile Linux executable once (no bundler network calls)
         if: runner.os == 'Linux'
         shell: bash
