@@ -270,11 +270,26 @@ jobs:
           key: tv-${{ matrix.target }}
       - name: Install frontend
         run: npm ci
-      - name: Build only ${{ matrix.bundle }}
+      - name: Compile desktop executable once (no bundler network calls)
         shell: bash
         run: |
           set -euo pipefail
-          npm run tauri -- build --bundles "${{ matrix.bundle }}" --config src-tauri/tauri.desktop.conf.json
+          npm run tauri -- build --no-bundle --config src-tauri/tauri.desktop.conf.json
+      - name: Bundle ${{ matrix.bundle }} with retries for transient tool download 5xx
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if npm run tauri -- bundle --bundles "${{ matrix.bundle }}" --config src-tauri/tauri.desktop.conf.json; then
+              echo "Bundling ${{ matrix.bundle }} succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Bundling ${{ matrix.bundle }} failed after five attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt*15))
+          done
       - name: Verify artifact and calculate SHA-256
         shell: bash
         run: |
