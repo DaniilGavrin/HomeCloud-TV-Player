@@ -144,6 +144,7 @@ export default function App() {
             audioSelectionAvailable={streamView.audioSelectionAvailable}
             selectedAudioIndex={streamView.selectedAudioIndex}
             seekSupported={streamView.seekSupported}
+            shouldAutoplay={roomView.playback_state !== 'PAUSED'}
             transportNotice={streamView.detail}
             onSelectAudioTrack={selectAudioTrack}
             onClose={() => {

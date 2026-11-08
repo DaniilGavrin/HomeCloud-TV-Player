@@ -228,3 +228,14 @@
 }
 .hc-tv-player__audio-track[aria-pressed="true"]{border-color:#89d2ff;}
 .hc-tv-player__audio-track:focus-visible {outline:2px solid #85caff;outline-offset:2px;}
+
+/* Customer-facing player: diagnostics are logged, not printed under the timeline. */
+.hc-tv-player__right-actions{display:flex;align-items:center;gap:15px}
+.hc-tv-player__audio-toggle{
+  min-height:40px;min-width:68px;border-radius:9px;padding:7px 11px;
+  border:1px solid rgba(152,192,230,.30);
+  background:rgba(32,66,94,.62);color:#e5f6ff;font:inherit;font-size:13px;
+}
+.hc-tv-player__audio-toggle:focus-visible{
+  outline:2px solid #bbecff;outline-offset:3px;
+}
