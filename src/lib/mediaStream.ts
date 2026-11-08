@@ -6,6 +6,7 @@
 import type { RoomLifecycle } from './roomLifecycle';
 import { currentDecoderCapabilities } from './mediaCapabilities.ts';
 import { currentExactDecoder } from './exactDecoder.ts';
+import { automaticAudioIndex } from './playbackPolicy.ts';
 
 export type MediaTrack = {
   index: number; kind: string; codec: string; profile?: string; level?: number;
@@ -42,6 +43,8 @@ let attachmentKey = '';
 let supportsHTTPRebind = false;
 let exactCheckKey = '';
 let activeDeviceId = '';
+let automaticAttemptKey = '';
+let manualSelectionKey = '';
 
 export const getStreamState = (): StreamState | null => current;
 export function subscribeStreamState(fn: () => void): () => void {
@@ -76,6 +79,8 @@ function closeActive(): void {
   supportsHTTPRebind = false;
   exactCheckKey = '';
   activeDeviceId = '';
+  automaticAttemptKey = '';
+  manualSelectionKey = '';
   const ws = activeSocket;
   activeSocket = null;
   if (ws) {
@@ -99,12 +104,15 @@ export function resetStream(): void {
  * Prefer MediaCapabilities for the specific video/target AAC combination.
  * Without an exact positive decoder report, do not start FFmpeg.
  */
-export async function selectAudioTrack(index: number): Promise<boolean> {
+export async function selectAudioTrack(index: number, mode: 'manual' | 'automatic' = 'manual'): Promise<boolean> {
   if (!Number.isSafeInteger(index) || index < 0 || index > 255 ||
       !current || current.phase !== 'ready' || !current.audioSelectionAvailable ||
       !activeSocket || activeSocket.readyState !== WebSocket.OPEN ||
       !activeDeviceId || !current.inspection?.media?.tracks.some(track =>
         track.kind === 'audio' && track.index === index)) return false;
+  const selectionKey = `${current.room_id}/${current.playback_id}/${current.generation}`;
+  if(mode==='automatic'&&(manualSelectionKey===selectionKey||current.converted))return false;
+  if(mode==='manual')manualSelectionKey=selectionKey;
   const inspection = current.inspection;
   const media = inspection.media!;
   const selected = media.tracks.find(t => t.kind === 'audio' && t.index === index)!;
@@ -125,7 +133,8 @@ export async function selectAudioTrack(index: number): Promise<boolean> {
   const roomId = current.room_id, playbackId = current.playback_id, generation = current.generation;
   const output = await currentExactDecoder(candidate);
   if (!output || !output.formats.some(f => f.container === 'mp4' && f.certainty === 'probably' &&
-      f.audio_codec === 'aac') || activeSocket !== ws || !current ||
+      f.audio_codec === 'aac') || (mode==='automatic' && manualSelectionKey===selectionKey) ||
+      activeSocket !== ws || !current ||
       current.room_id !== roomId || current.playback_id !== playbackId ||
       current.generation !== generation || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify({
@@ -175,6 +184,8 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
   if (!reuseSocket) closeActive();
   attachmentKey = key;
   exactCheckKey = '';
+  automaticAttemptKey = '';
+  manualSelectionKey = '';
   current = { room_id: roomId, playback_id: playbackId, generation, phase:'connecting' };
   emit();
 
@@ -248,9 +259,32 @@ export function attachRoomStream(value: unknown, ownDeviceId: string): boolean {
           (decision && (typeof decision.mode !== 'string' || typeof decision.reason !== 'string'))) return;
       current = { ...current, inspection:report as MediaInspection };
       emit();
+      const requestKey = `${roomId}/${playbackId}/${generation}`;
+      const autoIndex = automaticAudioIndex(report as MediaInspection);
+      // Use the exact same capability verification as manual selection.
+      // At most one automatic conversion attempt for this playback.
+      if (autoIndex !== null && current.audioSelectionAvailable &&
+          !current.converted && automaticAttemptKey !== requestKey &&
+          manualSelectionKey !== requestKey) {
+        automaticAttemptKey = requestKey;
+        void selectAudioTrack(autoIndex, 'automatic').then(ok => {
+          if(!ok && activeSocket===ws && current?.room_id===roomId &&
+             current.playback_id===playbackId && current.generation===generation &&
+             !current.converted && manualSelectionKey!==requestKey) {
+            current={...current,detail:'Не удалось автоматически подготовить звук'};
+            emit();
+          }
+        }).catch(error => {
+          console.error('Automatic TV audio negotiation failed', error);
+          if(activeSocket===ws&&current?.room_id===roomId &&
+             current.playback_id===playbackId&&current.generation===generation){
+            current={...current,detail:'Не удалось автоматически подготовить звук'};
+            emit();
+          }
+        });
+      }
       // Only the Gateway's authorized room socket can receive this report.
       // An exact decoder query refines metadata AFTER ready, not media bytes.
-      const requestKey = `${roomId}/${playbackId}/${generation}`;
       if (supportsHTTPRebind && report.status === 'READY' &&
           exactCheckKey !== requestKey) {
         exactCheckKey = requestKey;
