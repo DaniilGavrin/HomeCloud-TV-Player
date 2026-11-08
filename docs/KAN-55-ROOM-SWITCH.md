@@ -13,7 +13,7 @@ Example (replace placeholders with IDs returned by Backend):
 
 ```powershell
 .\scripts\Dev-Play-Storage.ps1 `
-  -Backend 'ws://192.168.0.147:8080/ws' `
+  -Backend 'ws://192.0.2.10:8080/ws' `
   -StorageNodeId '<storage-node-id>' `
   -NodeId '<backend-node-id>' `
   -RootID 'storage-hdd' `
@@ -45,7 +45,7 @@ Use the same `-Backend` and `-StorageNodeId` options as above:
 
 ```powershell
 .\scripts\Dev-Play-Storage.ps1 `
-  -Backend 'ws://192.168.0.147:8080/ws' `
+  -Backend 'ws://192.0.2.10:8080/ws' `
   -StorageNodeId '<storage-node-id>' `
   -ListRooms
 ```
@@ -56,7 +56,7 @@ catalog. To close one room explicitly:
 
 ```powershell
 .\scripts\Dev-Play-Storage.ps1 `
-  -Backend 'ws://192.168.0.147:8080/ws' `
+  -Backend 'ws://192.0.2.10:8080/ws' `
   -StorageNodeId '<storage-node-id>' `
   -RoomId '<existing-room-id>' `
   -Stop
