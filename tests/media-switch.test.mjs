@@ -213,3 +213,58 @@ test('KAN-63 converted media URL is bound to inspected track and current generat
  assert.equal(getStreamState().converted,undefined);
  resetStream();
 });
+
+
+test('TV file duration stays stable when fMP4 decoder duration grows',async()=>{
+ const {stableDuration,automaticAudioIndex}=await import('../src/lib/playbackPolicy.ts');
+ assert.equal(stableDuration(30, 600000),600);
+ assert.equal(stableDuration(60, 600000),600);
+ assert.equal(stableDuration(Number.POSITIVE_INFINITY,0),0);
+ assert.equal(stableDuration(80,undefined),80);
+ const ac3={status:'READY',media:{container:'matroska',tracks:[
+  {index:0,kind:'video',codec:'h264'},
+  {index:1,kind:'audio',codec:'ac3',default:true},
+ ]},decision:{mode:'ADAPTIVE',reason:'UNSUPPORTED',audio_stream_index:1}};
+ assert.equal(automaticAudioIndex(ac3),1);
+ assert.equal(automaticAudioIndex({...ac3,decision:{mode:'DIRECT',reason:'OK'}}),null);
+ assert.equal(automaticAudioIndex({...ac3, status:'UNAVAILABLE'}),null);
+ const shell=read('src/components/TVPlayerShell.tsx');
+ assert.doesNotMatch(shell,/Режим \(оценка\)|inspection\.decision\?\.reason/);
+ assert.match(shell,/audioMenuOpen && audioSelectionAvailable/);
+ assert.match(shell,/onCanPlay=\{startAutomatically\}/);
+});
+
+test('TV automatically selects AC3 output once on the active Gateway socket',async()=>{
+ resetStream();
+ MockWebSocket.instances.length=0;
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{
+  mediaCapabilities:{decodingInfo:async()=>({supported:true,smooth:true,powerEfficient:true})}
+ }});
+ try{
+  attachRoomStream(offer(1,'auto-ac3','a'.repeat(64)),'tv-1');
+  const ws=MockWebSocket.instances.at(-1);ws.onopen();
+  ws.onmessage({data:JSON.stringify({...ready('auto-ac3',1),http_switch:true,audio_selection:true})});
+  const msg={type:'media.inspection',room_id:'room-test',playback_id:'auto-ac3',generation:1,report:{
+    status:'READY',media:{container:'matroska',duration_ms:780000,bit_rate:7000000,tracks:[
+      {index:0,kind:'video',codec:'h264',profile:'High',level:40,
+        width:1920,height:1080,frame_rate:'30/1',bit_rate:5000000},
+      {index:1,kind:'audio',codec:'ac3',default:true,language:'rus',channels:6,sample_rate:48000,bit_rate:384000},
+    ]},decision:{mode:'ADAPTIVE',reason:'DECLARED_FORMAT_UNSUPPORTED',audio_stream_index:1},
+  }};
+  ws.onmessage({data:JSON.stringify(msg)});
+  await new Promise(resolve=>setImmediate(resolve));
+  let selects=ws.sent.map(JSON.parse).filter(x=>x.type==='media.audio.select');
+  assert.equal(selects.length,1);
+  assert.equal(selects[0].audio_index,1);
+  assert.equal(selects[0].capabilities.decoder.formats[0].audio_codec,'aac');
+  ws.onmessage({data:JSON.stringify(msg)});
+  await new Promise(resolve=>setImmediate(resolve));
+  selects=ws.sent.map(JSON.parse).filter(x=>x.type==='media.audio.select');
+  assert.equal(selects.length,1,'repeat metadata must not initiate conversion again');
+ }finally{
+  resetStream();
+  if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);
+  else delete globalThis.navigator;
+ }
+});
