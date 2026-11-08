@@ -13,5 +13,8 @@
         "decorations": true
       }
     ]
+  },
+  "bundle": {
+    "useLocalToolsDir": true
   }
 }
