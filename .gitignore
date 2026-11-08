@@ -28,3 +28,20 @@ dist-ssr
 *.keystore
 keystore.properties
 key.properties
+
+# Local configuration and credentials (never commit)
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.p12
+*.pfx
+*.key
+*.asc
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+google-services.json
+GoogleService-Info.plist
