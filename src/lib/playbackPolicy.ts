@@ -11,7 +11,7 @@ export function preferredAudioTrack(report:MediaInspection):MediaTrack|null {
 export function automaticAudioIndex(report:MediaInspection):number|null {
  if(report.status!=='READY'||report.decision?.mode==='DIRECT')return null;
  const audio=preferredAudioTrack(report);
- if(!audio)return null;
+ if(!audio||typeof audio.codec!=='string')return null;
  if(needsAAC.has(audio.codec.toLowerCase())||report.decision?.mode==='ADAPTIVE')return audio.index;
  return null;
 }

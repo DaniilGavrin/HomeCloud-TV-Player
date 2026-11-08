@@ -26,6 +26,7 @@ export interface TVPlayerShellProps {
   audioSelectionAvailable?: boolean;
   selectedAudioIndex?: number;
   seekSupported?: boolean;
+  shouldAutoplay?: boolean;
   transportNotice?: string;
   onSelectAudioTrack?: (index:number)=>Promise<boolean>;
   /** Only supply a previously-authorized Gateway media URL; never from arbitrary TV commands. */
@@ -64,7 +65,7 @@ function normalizedKey(event: KeyboardEvent): string {
 
 export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUrl, roomId, playbackId,
  generation, audioSelectionAvailable = false, selectedAudioIndex, seekSupported = true,
- transportNotice, onSelectAudioTrack, testMode = false, onClose }: TVPlayerShellProps) {
+ shouldAutoplay = true, transportNotice, onSelectAudioTrack, testMode = false, onClose }: TVPlayerShellProps) {
   const rootRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const backwardRef = useRef<HTMLButtonElement>(null);
@@ -186,16 +187,14 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   useEffect(() => {setNotice('');setAudioMenuOpen(false);autoPlayAttemptRef.current='';},[sourceUrl]);
   const startAutomatically=useCallback(() => {
     const video=videoRef.current;
-    if(!video || !sourceUrl || !video.paused || video.ended ||
+    if(!video || !sourceUrl || !shouldAutoplay || !video.paused || video.ended ||
        autoPlayAttemptRef.current===sourceUrl)return;
     autoPlayAttemptRef.current=sourceUrl;
-    video.muted=false;
-    video.volume=1;
     void video.play().then(()=>setNotice('')).catch(error=>{
       console.warn('TV auto playback failed',error);
       setNotice('Автоматическое воспроизведение недоступно — нажмите OK');
     });
-  },[sourceUrl]);
+  },[sourceUrl,shouldAutoplay]);
 
   useEffect(() => {
     show('play');
@@ -296,7 +295,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
         data-generation={testMode ? undefined : generation}
         src={sourceUrl ?? (testMode && mediaKind === 'video' ? '/hc-tv-control-test.mp4' : undefined)}
         preload={testMode || sourceUrl ? 'auto' : 'none'}
-        autoPlay={testMode || Boolean(sourceUrl)}
+        autoPlay={testMode || (Boolean(sourceUrl) && shouldAutoplay)}
         muted={testMode && mediaKind === 'video'}
         playsInline
         aria-label={mediaKind === 'audio' ? 'Аудиоплеер HomeCloud' : 'Видеоплеер HomeCloud'}
