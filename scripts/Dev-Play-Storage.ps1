@@ -1,12 +1,12 @@
 # KAN-59: one-shot trusted LAN test controller. Does NOT read media itself.
 # Examples:
-# .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.168.0.147:8080/ws -StorageNodeId <id>
-# .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.168.0.147:8080/ws -StorageNodeId <id> -NodeId <backendNode> -FileId <file_id> -Play
+# .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.0.2.10:8080/ws -StorageNodeId <id>
+# .\scripts\Dev-Play-Storage.ps1 -Backend ws://192.0.2.10:8080/ws -StorageNodeId <id> -NodeId <backendNode> -FileId <file_id> -Play
 # To switch an active room without ROOM_CONFLICT, add -RoomId <room_id> to -Play.
 # -ListRooms prints authoritative active rooms. -Stop -RoomId <id> closes one.
 [CmdletBinding()]
 param(
-    [string]$Backend = 'ws://192.168.0.147:8080/ws',
+    [string]$Backend = 'ws://127.0.0.1:8080/ws',
     [Parameter(Mandatory=$true)][string]$StorageNodeId,
     [string]$RootID = 'storage-hdd',
     [ValidateSet('disk','folder')][string]$RootKind = 'disk',
