@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 # PR build code cannot publish releases or write repository contents.
@@ -20,6 +21,9 @@ concurrency:
 jobs:
   android-packages:
     name: Build and verify signed Android ${{ matrix.format }}
+    # Full builds on PRs are opt-in: add the 'ci-full' label.
+    # On main and workflow_dispatch they always run.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -251,6 +255,7 @@ jobs:
   # Only the two Windows installers share a job; Linux formats remain separate.
   desktop-packages:
     name: Build ${{ matrix.target }}
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
