@@ -47,6 +47,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -287,6 +288,17 @@ jobs:
         with:
           workspaces: src-tauri
           key: tv-${{ matrix.target }}
+      # Tauri caches verified NSIS/WiX and AppImage tools here when
+      # bundle.useLocalToolsDir is enabled. Restoring tools avoids repeated
+      # GitHub Releases downloads (a recurring source of HTTP 504).
+      - name: Restore reusable Tauri packaging tools
+        if: runner.os == 'Windows' || matrix.target == 'linux-appimage'
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target/.tauri
+          key: tauri-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            tauri-tools-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Install frontend
         run: npm ci
       - name: Build Windows NSIS and MSI together (same approach as HomeCloudUI)
