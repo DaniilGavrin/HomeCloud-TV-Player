@@ -146,8 +146,21 @@ jobs:
           version_code=$((100000 + GITHUB_RUN_NUMBER))
           echo "ANDROID_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
           echo "Android versionCode: $version_code"
-          npm run tauri android build -- --apk --aab --ci \
-            --config "{\"bundle\":{\"android\":{\"versionCode\":$version_code}}}"
+          # GitHub's JetBrains Kotlin/compiler artifacts sometimes return
+          # transient HTTP 502/504. Gradle caches successful downloads, so
+          # retrying the SAME versionCode does not change Play identity.
+          for attempt in 1 2 3 4 5; do
+            if npm run tauri android build -- --apk --aab --ci \
+              --config "{\"bundle\":{\"android\":{\"versionCode\":$version_code}}}"; then
+              echo "Android packages built on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Android packaging failed after five attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt*15))
+          done
 
       - name: Locate and verify signed APK
         shell: bash
