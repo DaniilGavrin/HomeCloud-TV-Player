@@ -16,7 +16,7 @@ class MockWebSocket {
 }
 globalThis.WebSocket = MockWebSocket;
 
-const gateway = 'ws://192.168.0.147:8091/ws/stream';
+const gateway = 'ws://192.0.2.10:8091/ws/stream';
 function offer(generation, playback, ticket) {
   return {
     room_id: 'room-test', playback_id: playback, generation,
