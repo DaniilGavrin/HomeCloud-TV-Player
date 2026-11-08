@@ -84,7 +84,14 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   const [notice, setNotice] = useState('');
   const [audioMenuOpen,setAudioMenuOpen] = useState(false);
   const autoPlayAttemptRef=useRef('');
-  const displayedDuration=stableDuration(duration,inspection?.media?.duration_ms);
+  const inspectedMs=inspection?.media?.duration_ms;
+  const hasInspectedDuration=typeof inspectedMs==='number' && Number.isFinite(inspectedMs) && inspectedMs>0;
+  // A sequential converted fMP4 can report a growing decoder duration.
+  // Never present that as total file length if ffprobe could not measure it.
+  const displayedDuration=!seekSupported&&!hasInspectedDuration
+    ?0:stableDuration(duration,inspectedMs);
+  const displayedDurationLabel=!seekSupported&&!hasInspectedDuration
+    ?'--:--':formatPlayerTime(displayedDuration);
   const audioTracks=inspection?.status==='READY'
     ? inspection.media?.tracks.filter(t=>t.kind==='audio')??[] : [];
 
@@ -332,7 +339,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
               step={0.25}
               value={Math.min(position, duration > 0 ? duration : 1)}
               aria-label="Перемотка по таймлайну"
-              aria-valuetext={`${formatPlayerTime(position)} из ${formatPlayerTime(displayedDuration)}`}
+              aria-valuetext={`${formatPlayerTime(position)} из ${displayedDurationLabel}`}
               aria-disabled={!canSeek}
               tabIndex={visible ? 0 : -1}
               className="hc-tv-player__timeline"
@@ -340,7 +347,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
               onFocus={() => { focusRef.current = 'timeline'; keepOpen(); }}
               onChange={event => { seekTo(Number(event.currentTarget.value)); keepOpen(); }}
             />
-            <span className="hc-tv-player__time">{formatPlayerTime(displayedDuration)}</span>
+            <span className="hc-tv-player__time">{displayedDurationLabel}</span>
           </div>
 
           <div className="hc-tv-player__control-row" aria-label="Управление воспроизведением">
