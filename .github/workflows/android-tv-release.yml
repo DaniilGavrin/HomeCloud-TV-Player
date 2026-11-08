@@ -1,4 +1,4 @@
-name: HomeCloud TV Player — Signed APK + AAB
+name: HomeCloud TV Player — Android + parallel desktop packages
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: homecloud-tv-android-${{ github.ref }}
+  group: homecloud-tv-platforms-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -225,6 +225,78 @@ jobs:
             rm -f -- "$HC_TV_KEYSTORE_FILE"
           fi
 
+
+  # Android, NSIS, MSI, DEB, RPM and AppImage execute on independent runners.
+  # Jobs are parallel; no separate Git branches or platform overwrites.
+  desktop-packages:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-nsis, os: windows-2022, bundle: nsis, ext: exe }
+          - { target: windows-msi, os: windows-2022, bundle: msi, ext: msi }
+          - { target: linux-deb, os: ubuntu-24.04, bundle: deb, ext: deb }
+          - { target: linux-rpm, os: ubuntu-24.04, bundle: rpm, ext: rpm }
+          - { target: linux-appimage, os: ubuntu-24.04, bundle: appimage, ext: AppImage }
+    env:
+      CI: 'true'
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+    steps:
+      - name: Checkout TV Player
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Setup Rust desktop toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Linux WebKitGTK and packaging dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libssl-dev libxdo-dev file rpm libfuse2t64
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: tv-${{ matrix.target }}
+      - name: Install frontend
+        run: npm ci
+      - name: Build only ${{ matrix.bundle }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run tauri -- build --bundles "${{ matrix.bundle }}"
+      - name: Verify artifact and calculate SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="src-tauri/target/release/bundle/${{ matrix.bundle }}"
+          test -d "$dir"
+          mapfile -t results < <(find "$dir" -maxdepth 1 -type f -iname "*.${{ matrix.ext }}" | sort)
+          if [ "${#results[@]}" -ne 1 ]; then
+            echo "Expected one ${{ matrix.target }} artifact, found ${#results[@]}" >&2
+            find "$dir" -maxdepth 2 -type f -print >&2 || true
+            exit 1
+          fi
+          sha256sum "${results[0]}"
+          echo "BUNDLE_PATH=${results[0]}" >> "$GITHUB_ENV"
+      - name: Save ${{ matrix.target }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: homecloud-tv-desktop-${{ matrix.target }}
+          path: ${{ env.BUNDLE_PATH }}
+          if-no-files-found: error
+          retention-days: 7
+
   publish-release:
     name: Publish verified APK and AAB to GitHub Release
     needs: android-packages
@@ -270,3 +342,48 @@ jobs:
               --generate-notes --latest
           fi
           echo "Release published with signed APK and AAB."
+
+  # Do not block the signed Android release when a desktop bundle fails.
+  # Upload desktop formats only once all five jobs and Android publication pass.
+  publish-desktop:
+    name: Attach Windows and Linux bundles to TV release
+    needs: [desktop-packages, publish-release]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all five desktop formats
+        uses: actions/download-artifact@v4
+        with:
+          pattern: homecloud-tv-desktop-*
+          merge-multiple: true
+          path: desktop-artifacts
+      - name: Validate and extend the existing signed Android release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          exes=(desktop-artifacts/*.exe)
+          msis=(desktop-artifacts/*.msi)
+          debs=(desktop-artifacts/*.deb)
+          rpms=(desktop-artifacts/*.rpm)
+          appimages=(desktop-artifacts/*.AppImage)
+          for group in exes msis debs rpms appimages; do
+            declare -n files="$group"
+            if [ "${#files[@]}" -ne 1 ]; then
+              echo "Missing or duplicated $group bundle" >&2
+              exit 1
+            fi
+          done
+          cd desktop-artifacts
+          sha256sum ./* > SHA256SUMS-desktop.txt
+          tag="tv-${GITHUB_SHA:0:12}"
+          gh release view "$tag" >/dev/null
+          gh release upload "$tag" \
+            ./*.exe ./*.msi ./*.deb ./*.rpm ./*.AppImage \
+            SHA256SUMS-desktop.txt --clobber
+          echo "Uploaded Windows NSIS/MSI and Linux DEB/RPM/AppImage to $tag"
