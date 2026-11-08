@@ -311,12 +311,9 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
         }
       } else if (key === 'ArrowDown') {
         if(current==='timeline'){if(scrubRef.current!==null)cancelScrub();focus('play')}
-        else if(current==='audio')focus('play');
       } else if (key === 'ArrowUp') {
-        // On TV the timeline is ABOVE the play/seek buttons.
-        if(current==='timeline')focus('timeline');
-        else if(current==='audio')focus('timeline');
-        else focus('timeline');
+        // The timeline is directly above the transport buttons on a TV.
+        focus('timeline');
       } else {
         activate(current);
       }
