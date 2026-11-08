@@ -85,7 +85,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   const [notice, setNotice] = useState('');
   const [audioMenuOpen,setAudioMenuOpen] = useState(false);
   const autoPlayAttemptRef=useRef('');
-  // Native <input type="range"> is not reliably focusable on Android TV
+  // Native HTML range sliders are not reliably focusable on Android TV
   // WebView. Drive a semantic, focusable slider with the remote ourselves.
   const scrubRef=useRef<number|null>(null);
   const [scrubAt,setScrubAt]=useState<number|null>(null);
