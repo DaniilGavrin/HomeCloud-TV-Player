@@ -268,3 +268,22 @@ test('TV automatically selects AC3 output once on the active Gateway socket',asy
   else delete globalThis.navigator;
  }
 });
+
+test('D-pad slider previews bounded seek, supports acceleration and seek-disabled mode', async()=>{
+  const {clampSeek,advanceSeekPreview}=await import('../src/lib/timelineNavigation.ts');
+  assert.equal(advanceSeekPreview(100,7200,1),160);
+  assert.equal(advanceSeekPreview(100,7200,1,true),400);
+  assert.equal(advanceSeekPreview(10,600,-1),5);
+  assert.equal(advanceSeekPreview(2,600,-1),0);
+  assert.equal(advanceSeekPreview(7198,7200,1),7200);
+  assert.equal(clampSeek(Number.NaN,7200),0);
+  const shell=read('src/components/TVPlayerShell.tsx');
+  assert.match(shell,/role="slider"/);
+  assert.match(shell,/case 'timeline': commitScrub\(\)/);
+  assert.match(shell,/stageScrub\(key === 'ArrowLeft'/);
+  assert.match(shell,/if\(scrubRef\.current!==null\)\{cancelScrub\(\)/);
+  assert.match(shell,/focus\('timeline'\)/);
+  assert.doesNotMatch(shell,/type="range"/);
+  assert.match(shell,/seekSupported && hasMedia/);
+  assert.match(shell,/aria-disabled=\{!canSeek\}/);
+});

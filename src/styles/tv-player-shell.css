@@ -239,3 +239,43 @@
 .hc-tv-player__audio-toggle:focus-visible{
   outline:2px solid #bbecff;outline-offset:3px;
 }
+
+/* Android TV/WebView does not reliably expose input[type=range] to D-pad focus.
+ * Explicit semantic button-slider with 44px focus hit area, low-cost rendering. */
+.hc-tv-player__timeline {
+  position: relative;display:block;flex:1 1 auto;width:100%;min-width:0;
+  height:44px;padding:0;border:0;border-radius:9px;background:transparent;
+  cursor:pointer;appearance:none;-webkit-appearance:none;
+}
+.hc-tv-player__timeline-track {
+  position:absolute;top:50%;left:0;right:0;height:8px;border-radius:40px;
+  transform:translateY(-50%);
+  background:linear-gradient(to right,
+    #90d4fb 0%,#90d4fb var(--hc-progress),
+    #668cad var(--hc-progress),#668cad var(--hc-buffered),
+    rgba(169,199,227,.32) var(--hc-buffered),rgba(169,199,227,.32) 100%);
+}
+.hc-tv-player__timeline-thumb {
+  position:absolute;top:50%;left:var(--hc-progress);width:20px;height:20px;
+  border:3px solid #4894c4;border-radius:50%;background:#e6f7ff;
+  box-shadow:0 0 0 1px rgba(0,0,0,.28);
+  transform:translate(-50%,-50%);pointer-events:none;
+}
+.hc-tv-player__timeline:focus,.hc-tv-player__timeline:focus-visible {
+  outline:3px solid #b9e9ff;outline-offset:1px;
+  background:rgba(94,168,212,.14);
+}
+.hc-tv-player__timeline:focus .hc-tv-player__timeline-thumb,
+.hc-tv-player__timeline--scrubbing .hc-tv-player__timeline-thumb {
+  width:24px;height:24px;border-color:#e8f6ff;background:#71d7ff;
+  box-shadow:0 0 0 4px rgba(80,161,210,.24);
+}
+.hc-tv-player__timeline-preview {
+  position:absolute;left:clamp(36px,var(--hc-progress),calc(100% - 36px));
+  bottom:calc(100% + 6px);transform:translateX(-50%);
+  white-space:nowrap;padding:5px 10px;border:1px solid #a9dbfa;
+  border-radius:7px;background:#102b46;color:#f7fcff;
+  font-size:13px;font-variant-numeric:tabular-nums;pointer-events:none;
+}
+.hc-tv-player__timeline[aria-disabled="true"] {cursor:not-allowed}
+.hc-tv-player__timeline[aria-disabled="true"] .hc-tv-player__timeline-thumb {opacity:.55}
