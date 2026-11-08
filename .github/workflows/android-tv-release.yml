@@ -274,7 +274,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run tauri -- build --bundles "${{ matrix.bundle }}"
+          npm run tauri -- build --bundles "${{ matrix.bundle }}" --config src-tauri/tauri.desktop.conf.json
       - name: Verify artifact and calculate SHA-256
         shell: bash
         run: |

@@ -283,7 +283,7 @@ test('D-pad slider previews bounded seek, supports acceleration and seek-disable
   assert.match(shell,/stageScrub\(key === 'ArrowLeft'/);
   assert.match(shell,/if\(scrubRef\.current!==null\)\{cancelScrub\(\)/);
   assert.match(shell,/focus\('timeline'\)/);
-  assert.doesNotMatch(shell,/type="range"/);
+  assert.doesNotMatch(shell,/<input\s/);
   assert.match(shell,/seekSupported && hasMedia/);
   assert.match(shell,/aria-disabled=\{!canSeek\}/);
 });
