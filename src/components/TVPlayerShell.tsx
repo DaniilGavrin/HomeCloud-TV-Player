@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { MediaInspection } from '../lib/mediaStream';
 import { stableDuration } from '../lib/playbackPolicy';
+import { advanceSeekPreview, clampSeek } from '../lib/timelineNavigation';
 import '../styles/tv-player-shell.css';
 
 export interface TVPlayerShellProps {
@@ -71,7 +72,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   const backwardRef = useRef<HTMLButtonElement>(null);
   const playRef = useRef<HTMLButtonElement>(null);
   const forwardRef = useRef<HTMLButtonElement>(null);
-  const timelineRef = useRef<HTMLInputElement>(null);
+  const timelineRef = useRef<HTMLButtonElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRef = useRef(true);
   const focusRef = useRef<FocusSlot>('play');
@@ -84,6 +85,11 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   const [notice, setNotice] = useState('');
   const [audioMenuOpen,setAudioMenuOpen] = useState(false);
   const autoPlayAttemptRef=useRef('');
+  // Native <input type="range"> is not reliably focusable on Android TV
+  // WebView. Drive a semantic, focusable slider with the remote ourselves.
+  const scrubRef=useRef<number|null>(null);
+  const [scrubAt,setScrubAt]=useState<number|null>(null);
+  const seekInfoRef=useRef({position:0,duration:0,canSeek:false});
   const inspectedMs=inspection?.media?.duration_ms;
   const hasInspectedDuration=typeof inspectedMs==='number' && Number.isFinite(inspectedMs) && inspectedMs>0;
   // A sequential converted fMP4 can report a growing decoder duration.
@@ -92,6 +98,8 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
     ?0:stableDuration(duration,inspectedMs);
   const displayedDurationLabel=!seekSupported&&!hasInspectedDuration
     ?'--:--':formatPlayerTime(displayedDuration);
+  const canSeek = seekSupported && hasMedia && duration > 0 && Number.isFinite(duration);
+  seekInfoRef.current={position,duration:displayedDuration,canSeek};
   const audioTracks=inspection?.status==='READY'
     ? inspection.media?.tracks.filter(t=>t.kind==='audio')??[] : [];
 
@@ -106,6 +114,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
   }, []);
 
   const hide = useCallback(() => {
+    if(scrubRef.current!==null)return;
     if (hideTimer.current !== null) clearTimeout(hideTimer.current);
     hideTimer.current = null;
     // Move focus OUT of the subsequently aria-hidden toolbar.
@@ -116,7 +125,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
 
   const keepOpen = useCallback(() => {
     if (hideTimer.current !== null) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(hide, AUTO_HIDE_MS);
+    hideTimer.current = scrubRef.current===null ? setTimeout(hide, AUTO_HIDE_MS) : null;
   }, [hide]);
 
   const show = useCallback((slot: FocusSlot = 'play') => {
@@ -182,16 +191,52 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
     seekTo((video?.currentTime ?? 0) + seconds);
   }, [seekTo]);
 
+  const cancelScrub = useCallback(() => {
+    scrubRef.current=null;setScrubAt(null);
+    keepOpen();
+  },[keepOpen]);
+
+  const stageScrub = useCallback((direction:-1|1,repeat:boolean) => {
+    const snapshot=seekInfoRef.current;
+    if(!snapshot.canSeek){
+      setNotice('Перемотка этого потока недоступна');return;
+    }
+    const start=scrubRef.current??snapshot.position;
+    const next=advanceSeekPreview(start,snapshot.duration,direction,repeat);
+    scrubRef.current=next;setScrubAt(next);setNotice('');
+    keepOpen();
+  },[keepOpen]);
+
+  const commitScrub = useCallback(() => {
+    const snapshot=seekInfoRef.current;
+    if(!snapshot.canSeek){
+      setNotice('Перемотка этого потока недоступна');return;
+    }
+    if(scrubRef.current===null){
+      scrubRef.current=clampSeek(snapshot.position,snapshot.duration);
+      setScrubAt(scrubRef.current);
+      keepOpen();
+      return;
+    }
+    const target=scrubRef.current;
+    scrubRef.current=null;setScrubAt(null);
+    seekTo(target);
+    keepOpen();
+  },[seekTo,keepOpen]);
+
   const activate = useCallback((slot: FocusSlot) => {
     switch (slot) {
       case 'backward': seekBy(-SEEK_STEP); break;
       case 'play': void togglePlay(); break;
       case 'forward': seekBy(SEEK_STEP); break;
-      case 'timeline': break; // D-pad arrows move timeline, OK does not restart media.
+      case 'timeline': commitScrub(); break; // OK enters/commits preview.
     }
-  }, [seekBy, togglePlay]);
+  }, [seekBy, togglePlay, commitScrub]);
 
-  useEffect(() => {setNotice('');setAudioMenuOpen(false);autoPlayAttemptRef.current='';},[sourceUrl]);
+  useEffect(() => {
+    setNotice('');setAudioMenuOpen(false);autoPlayAttemptRef.current='';
+    scrubRef.current=null;setScrubAt(null);
+  },[sourceUrl]);
   const startAutomatically=useCallback(() => {
     const video=videoRef.current;
     if(!video || !sourceUrl || !shouldAutoplay || !video.paused || video.ended ||
@@ -221,6 +266,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
       event.stopImmediatePropagation();
       if (event.repeat && ['Enter', ' ', 'Spacebar', 'MediaPlayPause'].includes(key)) return;
       if (isBack) {
+        if(scrubRef.current!==null){cancelScrub();focus('timeline');return}
         if (visibleRef.current) hide();
         else onClose();
         return;
@@ -256,7 +302,7 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
       }
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         if (current === 'timeline') {
-          seekBy(key === 'ArrowLeft' ? -SEEK_STEP : SEEK_STEP);
+          stageScrub(key === 'ArrowLeft' ? -1 : 1,event.repeat);
         } else {
           const row: FocusSlot[] = ['backward', 'play', 'forward'];
           const idx = row.indexOf(current);
@@ -264,11 +310,13 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
           focus(row[newIdx]);
         }
       } else if (key === 'ArrowDown') {
-        if (current==='timeline' && audioSelectionAvailable &&
-            rootRef.current?.querySelector('[data-hc-audio-track]')) focus('audio');
-        else focus('timeline');
+        if(current==='timeline'){if(scrubRef.current!==null)cancelScrub();focus('play')}
+        else if(current==='audio')focus('play');
       } else if (key === 'ArrowUp') {
-        focus('play');
+        // On TV the timeline is ABOVE the play/seek buttons.
+        if(current==='timeline')focus('timeline');
+        else if(current==='audio')focus('timeline');
+        else focus('timeline');
       } else {
         activate(current);
       }
@@ -276,10 +324,10 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
     // Capture native D-pad before other media handlers (including MediaControlBridge).
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [activate, focus, hide, keepOpen, onClose, seekBy, show, togglePlay]);
+  }, [activate, cancelScrub, focus, hide, keepOpen, onClose, seekBy, show, stageScrub, togglePlay]);
 
-  const canSeek = seekSupported && hasMedia && duration > 0 && Number.isFinite(duration);
-  const progress = displayedDuration > 0 ? Math.min(100,Math.max(0,position/displayedDuration*100)) : 0;
+  const previewPosition=scrubAt??position;
+  const progress = displayedDuration > 0 ? Math.min(100,Math.max(0,previewPosition/displayedDuration*100)) : 0;
   const loaded = displayedDuration > 0 ? Math.min(100,Math.max(0,buffered/displayedDuration*100)) : 0;
   const timelineStyle = { '--hc-progress': `${progress}%`, '--hc-buffered': `${loaded}%` } as CSSProperties;
 
@@ -331,22 +379,36 @@ export function TVPlayerShell({ title, mediaKind = 'video', inspection, sourceUr
 
           <div className="hc-tv-player__timeline-row">
             <span className="hc-tv-player__time">{formatPlayerTime(position)}</span>
-            <input
+            <button
               ref={timelineRef}
-              type="range"
-              min={0}
-              max={duration > 0 ? duration : 1}
-              step={0.25}
-              value={Math.min(position, duration > 0 ? duration : 1)}
-              aria-label="Перемотка по таймлайну"
-              aria-valuetext={`${formatPlayerTime(position)} из ${displayedDurationLabel}`}
+              type="button"
+              role="slider"
+              aria-label="Позиция воспроизведения. Стрелки влево и вправо выбирают время, OK подтверждает"
+              aria-valuemin={0}
+              aria-valuemax={Math.max(1,Math.round(displayedDuration))}
+              aria-valuenow={Math.min(Math.round(previewPosition),Math.max(1,Math.round(displayedDuration)))}
+              aria-valuetext={`${formatPlayerTime(previewPosition)} из ${displayedDurationLabel}`}
               aria-disabled={!canSeek}
               tabIndex={visible ? 0 : -1}
-              className="hc-tv-player__timeline"
+              className={`hc-tv-player__timeline${scrubAt!==null?' hc-tv-player__timeline--scrubbing':''}`}
               style={timelineStyle}
-              onFocus={() => { focusRef.current = 'timeline'; keepOpen(); }}
-              onChange={event => { seekTo(Number(event.currentTarget.value)); keepOpen(); }}
-            />
+              onFocus={() => {focusRef.current='timeline';keepOpen();}}
+              onBlur={() => {if(scrubRef.current!==null)cancelScrub();}}
+              onClick={event => {
+                // D-pad/Enter is handled in the capture keydown listener.
+                if(event.detail===0)return;
+                if(!canSeek){setNotice('Перемотка этого потока недоступна');return;}
+                const rect=event.currentTarget.getBoundingClientRect();
+                seekTo(clampSeek((event.clientX-rect.left)/rect.width*displayedDuration,displayedDuration));
+                cancelScrub();keepOpen();
+              }}
+            >
+              <span className="hc-tv-player__timeline-track" aria-hidden="true"/>
+              <span className="hc-tv-player__timeline-thumb" aria-hidden="true"/>
+              {scrubAt!==null&&<span className="hc-tv-player__timeline-preview" aria-hidden="true">
+                {formatPlayerTime(scrubAt)} · OK
+              </span>}
+            </button>
             <span className="hc-tv-player__time">{displayedDurationLabel}</span>
           </div>
 
