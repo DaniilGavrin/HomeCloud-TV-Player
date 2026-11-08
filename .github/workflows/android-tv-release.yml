@@ -239,8 +239,8 @@ jobs:
           fi
 
 
-  # Android, NSIS, MSI, DEB, RPM and AppImage execute on independent runners.
-  # Jobs are parallel; no separate Git branches or platform overwrites.
+  # Android, Windows (NSIS+MSI), DEB, RPM and AppImage execute on independent runners.
+  # Only the two Windows installers share a job; Linux formats remain separate.
   desktop-packages:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -249,8 +249,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: windows-nsis, os: windows-2022, bundle: nsis, ext: exe }
-          - { target: windows-msi, os: windows-2022, bundle: msi, ext: msi }
+          - { target: windows-installers, os: windows-2022, bundle: 'nsis,msi', ext: exe }
           - { target: linux-deb, os: ubuntu-24.04, bundle: deb, ext: deb }
           - { target: linux-rpm, os: ubuntu-24.04, bundle: rpm, ext: rpm }
           - { target: linux-appimage, os: ubuntu-24.04, bundle: appimage, ext: AppImage }
@@ -283,12 +282,20 @@ jobs:
           key: tv-${{ matrix.target }}
       - name: Install frontend
         run: npm ci
-      - name: Compile desktop executable once (no bundler network calls)
+      - name: Build Windows NSIS and MSI together (same approach as HomeCloudUI)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run tauri -- build --bundles nsis,msi --config src-tauri/tauri.desktop.conf.json
+      - name: Compile Linux executable once (no bundler network calls)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           npm run tauri -- build --no-bundle --config src-tauri/tauri.desktop.conf.json
-      - name: Bundle ${{ matrix.bundle }} with retries for transient tool download 5xx
+      - name: Bundle Linux ${{ matrix.bundle }} with retries for transient tool download 5xx
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -303,7 +310,8 @@ jobs:
             fi
             sleep $((attempt*15))
           done
-      - name: Verify artifact and calculate SHA-256
+      - name: Verify Linux artifact and calculate SHA-256
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -317,13 +325,35 @@ jobs:
           fi
           sha256sum "${results[0]}"
           echo "BUNDLE_PATH=${results[0]}" >> "$GITHUB_ENV"
-      - name: Save ${{ matrix.target }}
+      - name: Save Linux ${{ matrix.target }}
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: homecloud-tv-desktop-${{ matrix.target }}
           path: ${{ env.BUNDLE_PATH }}
           if-no-files-found: error
           retention-days: 7
+      - name: Verify and collect both Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          foreach ($kind in @('nsis', 'msi')) {
+            $extension = if ($kind -eq 'nsis') { '*.exe' } else { '*.msi' }
+            $files = @(Get-ChildItem -Path "src-tauri/target/release/bundle/$kind" -Filter $extension -File -ErrorAction Stop)
+            if ($files.Count -ne 1) { throw "Expected exactly one $kind installer; found $($files.Count)" }
+            Get-FileHash -Algorithm SHA256 -LiteralPath $files[0].FullName | Format-List
+            Copy-Item -LiteralPath $files[0].FullName -Destination release-assets/
+          }
+      - name: Save Windows NSIS and MSI
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homecloud-tv-desktop-windows-installers
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
 
   publish-release:
     name: Publish verified APK and AAB to GitHub Release
@@ -372,7 +402,7 @@ jobs:
           echo "Release published with signed APK and AAB."
 
   # Do not block the signed Android release when a desktop bundle fails.
-  # Upload desktop formats only once all five jobs and Android publication pass.
+  # Upload desktop formats only once all four desktop jobs and Android publication pass.
   publish-desktop:
     name: Attach Windows and Linux bundles to TV release
     needs: [desktop-packages, publish-release]
