@@ -143,7 +143,9 @@ jobs:
           set -euo pipefail
           test -n "${HC_TV_KEYSTORE_FILE:-}"
           test -f "$HC_TV_KEYSTORE_FILE"
-          version_code=$((100000 + GITHUB_RUN_NUMBER))
+          version_code="$(date -u +%s)"
+          # Unix UTC seconds are monotonic for normal new runs and below Play\x27s 2.1B limit until 2036.
+          if [ "$version_code" -gt 2100000000 ]; then echo "Android versionCode exceeds Google Play limit" >&2; exit 1; fi
           echo "ANDROID_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
           echo "Android versionCode: $version_code"
           # GitHub's JetBrains Kotlin/compiler artifacts sometimes return
