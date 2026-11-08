@@ -19,9 +19,13 @@ concurrency:
 
 jobs:
   android-packages:
-    name: Build and verify signed universal APK + AAB
+    name: Build and verify signed Android ${{ matrix.format }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [apk, aab]
 
     env:
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
@@ -137,14 +141,14 @@ jobs:
 
       # Keep Android versionCode increasing for successive Google Play uploads.
       # Tauri's --config JSON is merged with src-tauri/tauri.conf.json.
-      - name: Build signed universal APK and AAB (all ABIs)
+      - name: Build signed Android ${{ matrix.format }} (all ABIs)
         shell: bash
         run: |
           set -euo pipefail
           test -n "${HC_TV_KEYSTORE_FILE:-}"
           test -f "$HC_TV_KEYSTORE_FILE"
-          version_code="$(date -u +%s)"
-          # Unix UTC seconds are monotonic for normal new runs and below Play\x27s 2.1B limit until 2036.
+          # Shared monotonic Play code for both parallel Android formats.
+          version_code=$((2000000000 + GITHUB_RUN_NUMBER))
           if [ "$version_code" -gt 2100000000 ]; then echo "Android versionCode exceeds Google Play limit" >&2; exit 1; fi
           echo "ANDROID_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
           echo "Android versionCode: $version_code"
@@ -152,7 +156,7 @@ jobs:
           # transient HTTP 502/504. Gradle caches successful downloads, so
           # retrying the SAME versionCode does not change Play identity.
           for attempt in 1 2 3 4 5; do
-            if npm run tauri android build -- --apk --aab --ci \
+            if npm run tauri android build -- --${{ matrix.format }} --ci \
               --config "{\"bundle\":{\"android\":{\"versionCode\":$version_code}}}"; then
               echo "Android packages built on attempt $attempt"
               break
@@ -165,6 +169,7 @@ jobs:
           done
 
       - name: Locate and verify signed APK
+        if: matrix.format == 'apk'
         shell: bash
         run: |
           set -euo pipefail
@@ -186,6 +191,7 @@ jobs:
           echo "APK_PATH=$apk" >> "$GITHUB_ENV"
 
       - name: Locate and verify signed AAB
+        if: matrix.format == 'aab'
         shell: bash
         run: |
           set -euo pipefail
@@ -211,6 +217,7 @@ jobs:
           echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
 
       - name: Verify Android TV launcher in packaged APK
+        if: matrix.format == 'apk'
         shell: bash
         run: |
           set -euo pipefail
@@ -221,14 +228,12 @@ jobs:
           fi
           echo 'Packaged APK declares an Android TV launcher activity.'
 
-      - name: Upload signed APK and AAB for main release
+      - name: Upload signed Android ${{ matrix.format }} for main release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: homecloud-tv-signed-packages
-          path: |
-            ${{ env.APK_PATH }}
-            ${{ env.AAB_PATH }}
+          name: homecloud-tv-signed-${{ matrix.format }}
+          path: ${{ matrix.format == 'apk' && env.APK_PATH || env.AAB_PATH }}
           if-no-files-found: error
           retention-days: 3
 
@@ -241,7 +246,7 @@ jobs:
           fi
 
 
-  # Android, Windows (NSIS+MSI), DEB, RPM and AppImage execute on independent runners.
+  # APK, AAB, Windows (NSIS+MSI), DEB, RPM and AppImage execute on independent runners.
   # Only the two Windows installers share a job; Linux formats remain separate.
   desktop-packages:
     name: Build ${{ matrix.target }}
@@ -379,7 +384,8 @@ jobs:
       - name: Download signed APK and AAB
         uses: actions/download-artifact@v4
         with:
-          name: homecloud-tv-signed-packages
+          pattern: homecloud-tv-signed-*
+          merge-multiple: true
           path: release-artifact
 
       - name: Publish APK and AAB
