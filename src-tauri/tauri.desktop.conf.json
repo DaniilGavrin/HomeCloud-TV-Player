@@ -1,0 +1,20 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "HomeCloud TV Player",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 480,
+        "fullscreen": false,
+        "resizable": true,
+        "decorations": true
+      }
+    ]
+  },
+  "bundle": {
+    "useLocalToolsDir": true
+  }
+}

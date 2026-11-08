@@ -1,4 +1,4 @@
-name: HomeCloud TV Player — Signed APK + AAB
+name: HomeCloud TV Player — Android + parallel desktop packages
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 # PR build code cannot publish releases or write repository contents.
@@ -14,14 +15,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: homecloud-tv-android-${{ github.ref }}
-  cancel-in-progress: false
+  group: homecloud-tv-platforms-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   android-packages:
-    name: Build and verify signed universal APK + AAB
+    name: Build and verify signed Android ${{ matrix.format }}
+    # Full builds on PRs are opt-in: add the 'ci-full' label.
+    # On main and workflow_dispatch they always run.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [apk, aab]
 
     env:
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
@@ -43,6 +51,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -137,19 +146,35 @@ jobs:
 
       # Keep Android versionCode increasing for successive Google Play uploads.
       # Tauri's --config JSON is merged with src-tauri/tauri.conf.json.
-      - name: Build signed universal APK and AAB (all ABIs)
+      - name: Build signed Android ${{ matrix.format }} (all ABIs)
         shell: bash
         run: |
           set -euo pipefail
           test -n "${HC_TV_KEYSTORE_FILE:-}"
           test -f "$HC_TV_KEYSTORE_FILE"
-          version_code=$((100000 + GITHUB_RUN_NUMBER))
+          # Shared monotonic Play code for both parallel Android formats.
+          version_code=$((2000000000 + GITHUB_RUN_NUMBER))
+          if [ "$version_code" -gt 2100000000 ]; then echo "Android versionCode exceeds Google Play limit" >&2; exit 1; fi
           echo "ANDROID_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
           echo "Android versionCode: $version_code"
-          npm run tauri android build -- --apk --aab --ci \
-            --config "{\"bundle\":{\"android\":{\"versionCode\":$version_code}}}"
+          # GitHub's JetBrains Kotlin/compiler artifacts sometimes return
+          # transient HTTP 502/504. Gradle caches successful downloads, so
+          # retrying the SAME versionCode does not change Play identity.
+          for attempt in 1 2 3 4 5; do
+            if npm run tauri android build -- --${{ matrix.format }} --ci \
+              --config "{\"bundle\":{\"android\":{\"versionCode\":$version_code}}}"; then
+              echo "Android packages built on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Android packaging failed after five attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt*15))
+          done
 
       - name: Locate and verify signed APK
+        if: matrix.format == 'apk'
         shell: bash
         run: |
           set -euo pipefail
@@ -171,6 +196,7 @@ jobs:
           echo "APK_PATH=$apk" >> "$GITHUB_ENV"
 
       - name: Locate and verify signed AAB
+        if: matrix.format == 'aab'
         shell: bash
         run: |
           set -euo pipefail
@@ -196,6 +222,7 @@ jobs:
           echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
 
       - name: Verify Android TV launcher in packaged APK
+        if: matrix.format == 'apk'
         shell: bash
         run: |
           set -euo pipefail
@@ -206,14 +233,12 @@ jobs:
           fi
           echo 'Packaged APK declares an Android TV launcher activity.'
 
-      - name: Upload signed APK and AAB for main release
+      - name: Upload signed Android ${{ matrix.format }} for main release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: homecloud-tv-signed-packages
-          path: |
-            ${{ env.APK_PATH }}
-            ${{ env.AAB_PATH }}
+          name: homecloud-tv-signed-${{ matrix.format }}
+          path: ${{ matrix.format == 'apk' && env.APK_PATH || env.AAB_PATH }}
           if-no-files-found: error
           retention-days: 3
 
@@ -224,6 +249,212 @@ jobs:
           if [ -n "${HC_TV_KEYSTORE_FILE:-}" ]; then
             rm -f -- "$HC_TV_KEYSTORE_FILE"
           fi
+
+
+  # APK, AAB, Windows (NSIS+MSI), DEB, RPM and AppImage execute on independent runners.
+  # Only the two Windows installers share a job; Linux formats remain separate.
+  desktop-packages:
+    name: Build ${{ matrix.target }}
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-installers, os: windows-2022, bundle: 'nsis,msi', ext: exe }
+          - { target: linux-deb, os: ubuntu-24.04, bundle: deb, ext: deb }
+          - { target: linux-rpm, os: ubuntu-24.04, bundle: rpm, ext: rpm }
+          - { target: linux-appimage, os: ubuntu-24.04, bundle: appimage, ext: AppImage }
+    env:
+      CI: 'true'
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+    steps:
+      - name: Checkout TV Player
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Setup Rust desktop toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Linux WebKitGTK and packaging dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libssl-dev libxdo-dev file rpm libfuse2t64
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: tv-${{ matrix.target }}
+      # Tauri caches verified NSIS/WiX and AppImage tools here when
+      # bundle.useLocalToolsDir is enabled. Restoring tools avoids repeated
+      # GitHub Releases downloads (a recurring source of HTTP 504).
+      - name: Restore reusable Tauri packaging tools
+        if: runner.os == 'Windows' || matrix.target == 'linux-appimage'
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target/.tauri
+          key: tauri-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            tauri-tools-v1-${{ runner.os }}-${{ runner.arch }}-
+      # Cold caches still need a download. Curl retries the actual HTTP fetch,
+      # not the costly Rust compilation, and official release SHA-256 is pinned.
+      - name: Preload verified Windows NSIS toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tools = Join-Path 'src-tauri/target' '.tauri'
+          $nsis = Join-Path $tools 'NSIS'
+          New-Item -ItemType Directory -Path $tools -Force | Out-Null
+          function Download-Verified([string]$Url, [string]$Output, [string]$Sha256) {
+            $temp = "$Output.partial"
+            try {
+              & curl.exe --fail --location --retry 10 --retry-all-errors --retry-delay 6 --retry-max-time 900 --connect-timeout 20 --max-time 180 --output $temp $Url
+              if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE): $Url" }
+              $actual = (Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($actual -ne $Sha256) { throw "SHA-256 mismatch for $Url" }
+              Move-Item -LiteralPath $temp -Destination $Output -Force
+            } finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+          }
+          $nsisExe = Join-Path $nsis 'NSIS.exe'
+          if (!(Test-Path $nsisExe) -or (Get-FileHash -LiteralPath $nsisExe -Algorithm SHA1).Hash -ne '6D45D4E8CCF18FE1FDAC9164058F356102A2ECF2') {
+            $zip = Join-Path $env:RUNNER_TEMP 'hc-nsis-3.13.zip'
+            Download-Verified 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip' $zip 'ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8'
+            Expand-Archive -LiteralPath $zip -DestinationPath $tools -Force
+            if (Test-Path $nsis) { Remove-Item -LiteralPath $nsis -Recurse -Force }
+            Move-Item -LiteralPath (Join-Path $tools 'nsis-3.13') -Destination $nsis
+          }
+          $plugin = Join-Path $nsis 'Plugins/x86-unicode/additional/nsis_tauri_utils.dll'
+          $expectedPlugin = '5ba143b5db4a87d32d6e7802e033330aae56cbceabe0d1e3ba41948385ad4709'
+          if (!(Test-Path $plugin) -or (Get-FileHash -LiteralPath $plugin -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedPlugin) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $plugin) -Force | Out-Null
+            Download-Verified 'https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll' $plugin $expectedPlugin
+          }
+          Write-Host 'Verified NSIS and Tauri NSIS plugin are ready.'
+      - name: Preload verified AppImage packaging tools
+        if: matrix.target == 'linux-appimage'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools='src-tauri/target/.tauri'
+          mkdir -p "$tools"
+          fetch_verified() {
+            local path="$1" url="$2" expected="$3" tmp
+            if [ -s "$path" ]; then return 0; fi
+            tmp="$(mktemp "${RUNNER_TEMP}/hc-tauri-tool-XXXXXX")"
+            if ! curl --fail --location --retry 10 --retry-all-errors --retry-delay 6 --retry-max-time 900 --connect-timeout 20 --max-time 180 --output "$tmp" "$url"; then
+              rm -f "$tmp"
+              return 1
+            fi
+            if ! echo "$expected  $tmp" | sha256sum --check --status; then
+              rm -f "$tmp"
+              echo "SHA-256 mismatch: $url" >&2
+              return 1
+            fi
+            chmod 770 "$tmp"
+            mv -f "$tmp" "$path"
+          }
+          fetch_verified "$tools/AppRun-x86_64" \
+            'https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64' \
+            'f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f'
+          # Tauri intentionally modifies three bytes of linuxdeploy after use;
+          # an existing cached copy therefore has a different SHA-256.
+          fetch_verified "$tools/linuxdeploy-07333c6-x86_64.AppImage" \
+            'https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-x86_64.AppImage' \
+            '36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62'
+          echo 'Pinned Tauri AppImage tools are ready.'
+      - name: Install frontend
+        run: npm ci
+      - name: Build Windows NSIS and MSI together (same approach as HomeCloudUI)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if npm run tauri -- build --bundles nsis,msi --config src-tauri/tauri.desktop.conf.json; then
+              echo "Both Windows installers built on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Windows NSIS/MSI build failed after five attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt*15))
+          done
+      - name: Compile Linux executable once (no bundler network calls)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run tauri -- build --no-bundle --config src-tauri/tauri.desktop.conf.json
+      - name: Bundle Linux ${{ matrix.bundle }} with retries for transient tool download 5xx
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if npm run tauri -- bundle --bundles "${{ matrix.bundle }}" --config src-tauri/tauri.desktop.conf.json; then
+              echo "Bundling ${{ matrix.bundle }} succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Bundling ${{ matrix.bundle }} failed after five attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt*15))
+          done
+      - name: Verify Linux artifact and calculate SHA-256
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="src-tauri/target/release/bundle/${{ matrix.bundle }}"
+          test -d "$dir"
+          mapfile -t results < <(find "$dir" -maxdepth 1 -type f -iname "*.${{ matrix.ext }}" | sort)
+          if [ "${#results[@]}" -ne 1 ]; then
+            echo "Expected one ${{ matrix.target }} artifact, found ${#results[@]}" >&2
+            find "$dir" -maxdepth 2 -type f -print >&2 || true
+            exit 1
+          fi
+          sha256sum "${results[0]}"
+          echo "BUNDLE_PATH=${results[0]}" >> "$GITHUB_ENV"
+      - name: Save Linux ${{ matrix.target }}
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homecloud-tv-desktop-${{ matrix.target }}
+          path: ${{ env.BUNDLE_PATH }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify and collect both Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          foreach ($kind in @('nsis', 'msi')) {
+            $extension = if ($kind -eq 'nsis') { '*.exe' } else { '*.msi' }
+            $files = @(Get-ChildItem -Path "src-tauri/target/release/bundle/$kind" -Filter $extension -File -ErrorAction Stop)
+            if ($files.Count -ne 1) { throw "Expected exactly one $kind installer; found $($files.Count)" }
+            Get-FileHash -Algorithm SHA256 -LiteralPath $files[0].FullName | Format-List
+            Copy-Item -LiteralPath $files[0].FullName -Destination release-assets/
+          }
+      - name: Save Windows NSIS and MSI
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homecloud-tv-desktop-windows-installers
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
 
   publish-release:
     name: Publish verified APK and AAB to GitHub Release
@@ -237,7 +468,8 @@ jobs:
       - name: Download signed APK and AAB
         uses: actions/download-artifact@v4
         with:
-          name: homecloud-tv-signed-packages
+          pattern: homecloud-tv-signed-*
+          merge-multiple: true
           path: release-artifact
 
       - name: Publish APK and AAB
@@ -270,3 +502,48 @@ jobs:
               --generate-notes --latest
           fi
           echo "Release published with signed APK and AAB."
+
+  # Do not block the signed Android release when a desktop bundle fails.
+  # Upload desktop formats only once all four desktop jobs and Android publication pass.
+  publish-desktop:
+    name: Attach Windows and Linux bundles to TV release
+    needs: [desktop-packages, publish-release]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all five desktop formats
+        uses: actions/download-artifact@v4
+        with:
+          pattern: homecloud-tv-desktop-*
+          merge-multiple: true
+          path: desktop-artifacts
+      - name: Validate and extend the existing signed Android release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          exes=(desktop-artifacts/*.exe)
+          msis=(desktop-artifacts/*.msi)
+          debs=(desktop-artifacts/*.deb)
+          rpms=(desktop-artifacts/*.rpm)
+          appimages=(desktop-artifacts/*.AppImage)
+          for group in exes msis debs rpms appimages; do
+            declare -n files="$group"
+            if [ "${#files[@]}" -ne 1 ]; then
+              echo "Missing or duplicated $group bundle" >&2
+              exit 1
+            fi
+          done
+          cd desktop-artifacts
+          sha256sum ./* > SHA256SUMS-desktop.txt
+          tag="tv-${GITHUB_SHA:0:12}"
+          gh release view "$tag" >/dev/null
+          gh release upload "$tag" \
+            ./*.exe ./*.msi ./*.deb ./*.rpm ./*.AppImage \
+            SHA256SUMS-desktop.txt --clobber
+          echo "Uploaded Windows NSIS/MSI and Linux DEB/RPM/AppImage to $tag"
